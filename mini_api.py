@@ -72,7 +72,7 @@ def _init_db():
         for col in ['invite_code VARCHAR(50)', 'welcome_s INTEGER', 'form_s INTEGER',
                      'result_locked_s INTEGER', 'result_unlocked_s INTEGER', 'mine_s INTEGER',
                      'school_name VARCHAR(200)', 'education_level VARCHAR(50)', 'school_tier VARCHAR(50)',
-                     'major VARCHAR(200)']:
+                     'major VARCHAR(200)', 'company_type VARCHAR(100)']:
             col_name = col.split()[0]
             cur.execute(f'''
                 DO $$ BEGIN
@@ -114,13 +114,13 @@ def _insert_log(log_data):
                 resume_len, retry, insufficient, resume_text, grade, tag, salary,
                 factors_detail, abilities, deep_insight, error, elapsed,
                 invite_code, welcome_s, form_s,
-                school_name, education_level, school_tier, major)
+                school_name, education_level, school_tier, major, company_type)
             VALUES (%(time)s, %(type)s, %(city)s, %(industry)s, %(function)s, %(title)s,
                 %(resume_len)s, %(retry)s, %(insufficient)s, %(resume_text)s, %(grade)s,
                 %(tag)s, %(salary)s, %(factors_detail)s, %(abilities)s, %(deep_insight)s,
                 %(error)s, %(elapsed)s,
                 %(invite_code)s, %(welcome_s)s, %(form_s)s,
-                %(school_name)s, %(education_level)s, %(school_tier)s, %(major)s)
+                %(school_name)s, %(education_level)s, %(school_tier)s, %(major)s, %(company_type)s)
             RETURNING id
         ''', {
             'time': log_data.get('time'),
@@ -148,6 +148,7 @@ def _insert_log(log_data):
             'education_level': log_data.get('education_level'),
             'school_tier': log_data.get('school_tier'),
             'major': log_data.get('major'),
+            'company_type': log_data.get('company_type'),
         })
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -608,6 +609,7 @@ def assess():
         school_name = (data.get('schoolName') or '').strip()
         education_level = (data.get('educationLevel') or '本科').strip()
         major = (data.get('major') or '').strip()
+        company_type = (data.get('companyType') or '').strip()
         school_tier = identify_school_tier(school_name)
         print(f"[学生版] 学校={school_name}, 专业={major}, 学历={education_level}, 层级={school_tier}")
 
@@ -667,6 +669,7 @@ def assess():
                 'education_level': education_level or None,
                 'school_tier': school_tier or None,
                 'major': major or None,
+                'company_type': company_type or None,
             })
             assessment_counter = log_id
             print(f"\n⚠️ 信息不足拦截 #{log_id} | {now}")
