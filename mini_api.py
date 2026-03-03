@@ -70,7 +70,7 @@ def _init_db():
         ''')
         # 在 assessment_logs 上追加页面停留时长列 & 学生版字段（幂等）
         for col in ['invite_code VARCHAR(50)', 'welcome_s INTEGER', 'form_s INTEGER',
-                     'result_locked_s INTEGER', 'result_unlocked_s INTEGER', 'mine_s INTEGER',
+                     'result_s INTEGER', 'mine_s INTEGER',
                      'school_name VARCHAR(200)', 'education_level VARCHAR(50)', 'school_tier VARCHAR(50)',
                      'major VARCHAR(200)', 'company_type VARCHAR(100)', 'target_company VARCHAR(200)']:
             col_name = col.split()[0]
@@ -564,9 +564,9 @@ def assess():
             "level": 14,
             "levelTag": "业务脊梁",
             "levelDesc": "你是团队的中流砥柱...",
-            "abilities": {...},        // 5能力详情（付费内容）
-            "radarData": {...},        // 雷达图数据（付费内容）
-            "abilitySummary": "..."    // 能力总结（付费内容）
+            "abilities": {...},        // 5能力详情
+            "radarData": {...},        // 雷达图数据
+            "abilitySummary": "..."    // 能力总结
         }
     }
     """
@@ -885,13 +885,11 @@ def assess():
         return jsonify({
             'success': True,
             'data': {
-                # 免费内容
                 'salaryRange': salary_range,
                 'level': job_grade,
                 'levelTag': level_tag,
                 'levelDesc': level_desc,
 
-                # 付费内容（前端根据解锁状态决定是否显示）
                 'abilities': abilities,
                 'radarData': radar_data,
                 'abilitySummary': ability_summary,
@@ -988,14 +986,14 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
     }), 200
 
 
-VALID_DURATION_COLS = {'result_locked_s', 'result_unlocked_s', 'mine_s'}
+VALID_DURATION_COLS = {'result_s', 'mine_s'}
 
 @app.route('/api/mini/update-duration', methods=['POST'])
 def update_duration():
     """回写评估后页面的停留时长到 assessment_logs"""
     data = request.get_json()
     log_id = data.get('logId')
-    col = data.get('column')  # result_locked_s / result_unlocked_s / mine_s
+    col = data.get('column')  # result_s / mine_s
     duration_s = data.get('durationS')
 
     if not log_id or not isinstance(log_id, int):
