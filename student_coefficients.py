@@ -60,13 +60,13 @@ def apply_student_coefficients(
 
 def format_salary_k(low_wan: float, high_wan: float) -> str:
     """
-    将年薪万元转为月度基本工资 k 格式（保留一位小数）
+    将年总现金薪酬（万元）转为月度基本工资 k 格式（按13薪折算，保留一位小数）
 
-    e.g. 25.6万/年 → 21.3k/月, 30.1万/年 → 25.1k/月
-    薪酬格式: "21.3k~25.1k"
+    e.g. 25.6万/年 → 19.7k/月, 30.1万/年 → 23.2k/月
+    薪酬格式: "19.7k~23.2k"
     """
-    low_k = round(low_wan * 10 / 12, 1)
-    high_k = round(high_wan * 10 / 12, 1)
+    low_k = round(low_wan * 10 / 13, 1)
+    high_k = round(high_wan * 10 / 13, 1)
     return f"{low_k}k~{high_k}k"
 
 
