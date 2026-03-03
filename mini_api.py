@@ -705,11 +705,9 @@ def assess():
         job_grade = hay_result['summary'].get('job_grade', 14)
         total_score = hay_result['summary'].get('total_score', 0)
 
-        # 学生版：限制职级范围 9-13
+        # 学生版：职级下限兜底到 9
         if job_grade < 9:
             job_grade = 9
-        elif job_grade > 13:
-            job_grade = 13
 
         # 4. 查询薪酬
         print("[步骤3] 查询薪酬...")
