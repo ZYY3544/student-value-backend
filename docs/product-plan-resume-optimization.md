@@ -326,10 +326,688 @@
 
 ---
 
-## 八、待讨论问题
+## 八、简历优化 Agent（Chatbot）实现方案
 
-1. **定价策略选择**：方案 A / B / C，哪个更适合当前阶段？
-2. **MVP 范围确认**：是否先做模块 1 + 4 验证，还是一步到位？
-3. **交互形态**：简历优化结果在小程序端如何呈现？分页 / 长报告 / 可下载 PDF？
-4. **付费时机**：是评估完立刻引导付费，还是先展示部分诊断结果再付费解锁完整版？
-5. **迭代节奏**：MVP 上线后多久收集反馈并决定是否推进完整版？
+> 决策：第三层"价值提升"功能以 **对话式 Agent（Chatbot）** 形态实现，嵌入网页端。
+
+### 8.1 为什么用 Chatbot 而不是一次性报告
+
+| 维度 | 一次性报告 | Chatbot Agent |
+|------|-----------|---------------|
+| 信息获取 | 只能基于简历已有内容 | 可主动追问，挖掘简历未写但实际做过的事 |
+| 用户体验 | 冷冰冰的报告 | 像和职业导师对话，有温度 |
+| 优化精度 | 泛泛建议 | 多轮迭代，每条建议都可细化 |
+| 信息不足问题 | 无解 | 通过对话自然补充 |
+| 付费感知 | "看了一页报告" | "和 AI 导师聊了 20 分钟"，价值感更强 |
+
+### 8.2 Agent 对话流程设计
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     用户完成价值评估（第一层+第二层）              │
+│                                                                  │
+│  已有数据：                                                      │
+│  • 原始简历文本                                                  │
+│  • HAY 8 因素评估结果                                            │
+│  • 5 维能力得分                                                  │
+│  • 薪资区间 + Grade                                              │
+│  • 深度洞察文本                                                  │
+│  • 简历健康分                                                    │
+│  • 目标岗位信息（城市/行业/职能/职位）                            │
+│  • 学校/学历信息                                                 │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ 点击"优化我的简历"
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 0：开场白（Agent 主动发起）                                │
+│  ─────────────────────────────────────                           │
+│                                                                  │
+│  Agent：                                                         │
+│  "你好！我已经看过你的简历和评估结果了。你目前的评估是              │
+│   Grade {X}，月薪 {range}。整体来看你的简历健康分是 {score}，     │
+│   主要在{最弱维度}方面还有不少提升空间。                           │
+│                                                                  │
+│   接下来我会逐条帮你优化简历中的经历描述，每一条我都会              │
+│   告诉你改动对应的价值提升。我们开始吧！                          │
+│                                                                  │
+│   先来看你的第一段经历——"                                        │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 1：逐条经历优化（核心循环，每段经历重复此流程）            │
+│  ─────────────────────────────────────                           │
+│                                                                  │
+│  Step 1 - 诊断                                                   │
+│  Agent：                                                         │
+│  "你写的是：'在 XX 公司实习，负责数据分析工作'                    │
+│   这段描述有几个问题：                                            │
+│   ❌ 没有量化成果（影响专业力评分）                               │
+│   ❌ 看不出你用了什么工具和方法（影响思辨力评分）                  │
+│   能跟我说说，你具体做了什么吗？用了什么工具？有什么成果？"        │
+│                                                                  │
+│  Step 2 - 用户补充                                               │
+│  用户："我用 Python 做用户留存分析，搭了个预测模型，               │
+│        后来产品组根据我的分析改了推荐逻辑"                         │
+│                                                                  │
+│  Step 3 - 生成优化版本                                           │
+│  Agent：                                                         │
+│  "很好！建议改写为：                                              │
+│   ✅ '使用 Python 搭建用户留存预测模型，覆盖 3 条核心业务线，     │
+│      日均处理 10 万+ 用户行为数据，分析结论直接推动首页推荐        │
+│      策略优化，7 日留存率提升约 2 个百分点'                       │
+│                                                                  │
+│   这样改动后，专业力评估预计从 D+ → E-（+0.5 档）                │
+│   你觉得这个版本 OK 吗？还是有什么要调整的？"                     │
+│                                                                  │
+│  Step 4 - 用户确认/微调                                          │
+│  用户："数据量不确定是不是10万，大概几万条吧"                      │
+│  Agent："没问题，改为'数万条用户行为数据'，更严谨。               │
+│         我们来看下一段经历——"                                     │
+│                                                                  │
+│  → 循环处理所有经历段落                                           │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ 所有经历处理完毕
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 2：补充建议（可选，Agent 判断是否需要）                    │
+│  ─────────────────────────────────────                           │
+│                                                                  │
+│  Agent：                                                         │
+│  "你的简历目前缺少{缺失模块}的内容。对于{目标岗位}来说，          │
+│   这个部分还挺重要的。你有没有以下经历？                          │
+│   • 相关的课程项目或毕业设计？                                    │
+│   • 参加过的竞赛或获奖经历？                                     │
+│   • 开源贡献或个人项目？"                                        │
+│                                                                  │
+│  用户：补充信息                                                   │
+│  Agent：帮助撰写新的简历段落                                     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 3：总结 & 价值提升预估                                     │
+│  ─────────────────────────────────────                           │
+│                                                                  │
+│  Agent：                                                         │
+│  "好的，我们一共优化了 {N} 段经历，新增了 {M} 段内容。            │
+│   整体变化：                                                     │
+│                                                                  │
+│   优化前：Grade 11 → 月薪 15.2k~18.5k                           │
+│   优化后：Grade 12 → 月薪 18.5k~22.1k（预估）                   │
+│   简历健康分：58 → 82                                             │
+│                                                                  │
+│   核心提升：                                                     │
+│   • 专业力：D+ → E-                                              │
+│   • 管理力：T → T+                                               │
+│                                                                  │
+│   你可以复制优化后的内容更新到你的简历中。                        │
+│   如果后续有新的经历想加入，随时可以回来继续优化！"                │
+│                                                                  │
+│  [导出优化后的简历文本] [复制到剪贴板]                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 8.3 技术架构设计
+
+#### 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        前端（Web 页面）                          │
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────────────────────────────┐   │
+│  │  评估结果页面  │───→│  Chatbot 窗口（嵌入式聊天组件）       │   │
+│  │  （现有功能）  │    │  • 消息列表（支持 Markdown 渲染）     │   │
+│  └──────────────┘    │  • 输入框 + 发送按钮                  │   │
+│                      │  • 流式文字输出（打字机效果）           │   │
+│                      │  • 导出/复制按钮                       │   │
+│                      └─────────────┬────────────────────────┘   │
+└────────────────────────────────────┼────────────────────────────┘
+                                     │ SSE (Server-Sent Events)
+                                     │ + REST API
+                                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     后端（Flask 扩展）                            │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                  Chat API Layer                          │    │
+│  │  POST /api/chat/start     ← 创建会话，注入评估上下文     │    │
+│  │  POST /api/chat/message   ← 发送消息，SSE 流式返回      │    │
+│  │  GET  /api/chat/history   ← 获取历史消息                 │    │
+│  │  POST /api/chat/export    ← 导出优化结果                 │    │
+│  └────────────────────────────┬────────────────────────────┘    │
+│                               │                                  │
+│  ┌────────────────────────────▼────────────────────────────┐    │
+│  │              Resume Agent Service (新增)                  │    │
+│  │                                                          │    │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │    │
+│  │  │ Session      │  │ Prompt       │  │ Resume       │   │    │
+│  │  │ Manager      │  │ Builder      │  │ Structurer   │   │    │
+│  │  │ 会话状态管理  │  │ System Prompt│  │ 简历结构化    │   │    │
+│  │  │ 上下文维护    │  │ 动态构建      │  │ 段落拆分      │   │    │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘   │    │
+│  │                                                          │    │
+│  │  ┌──────────────┐  ┌──────────────┐                     │    │
+│  │  │ Value        │  │ Conversation │                     │    │
+│  │  │ Simulator    │  │ Logger       │                     │    │
+│  │  │ 价值提升模拟  │  │ 对话持久化    │                     │    │
+│  │  └──────────────┘  └──────────────┘                     │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                               │                                  │
+│          ┌────────────────────┼─────────────────────┐            │
+│          ▼                    ▼                     ▼            │
+│  ┌──────────────┐    ┌──────────────┐      ┌──────────────┐    │
+│  │ LLM Service  │    │ HAY Engine   │      │ PostgreSQL   │    │
+│  │ (DeepSeek)   │    │ (现有复用)    │      │ (会话存储)    │    │
+│  │ + 流式输出    │    │              │      │              │    │
+│  └──────────────┘    └──────────────┘      └──────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 核心模块说明
+
+**1) Session Manager（会话状态管理）**
+
+管理每个用户的对话会话，维护 Agent 当前所处阶段和上下文。
+
+```python
+# 会话状态数据结构
+{
+    "session_id": "uuid",
+    "created_at": "2026-03-03T10:00:00",
+    "status": "active",          # active / completed / expired
+
+    # 来自评估的上下文（创建会话时注入）
+    "assessment_context": {
+        "resume_text": "原始简历",
+        "factors": {"practical_knowledge": "D+", ...},
+        "abilities": {"专业力": 55, ...},
+        "salary_range": "15.2k~18.5k",
+        "grade": 11,
+        "job_info": {"city": "上海", "function": "算法", ...},
+        "school_tier": "211",
+        "resume_health_score": 58
+    },
+
+    # Agent 状态机
+    "agent_state": {
+        "current_phase": "experience_optimization",  # opening / experience_optimization / supplement / summary
+        "resume_sections": [                          # 简历拆分后的段落
+            {
+                "id": 1,
+                "type": "internship",
+                "original_text": "在XX公司实习...",
+                "status": "optimized",               # pending / in_progress / optimized / skipped
+                "optimized_text": "使用Python搭建...",
+                "improvement_notes": "专业力 D+ → E-"
+            },
+            {
+                "id": 2,
+                "type": "project",
+                "original_text": "参与创新创业比赛...",
+                "status": "in_progress",
+                "optimized_text": null,
+                "improvement_notes": null
+            }
+        ],
+        "current_section_index": 1,
+        "estimated_improvements": {
+            "grade_delta": "+1",
+            "salary_delta": "+3.3k~3.6k",
+            "health_score_delta": "+24"
+        }
+    },
+
+    # 对话历史（发送给 LLM 的 messages 数组）
+    "messages": [
+        {"role": "system", "content": "..."},
+        {"role": "assistant", "content": "你好！我已经看过..."},
+        {"role": "user", "content": "..."},
+        ...
+    ]
+}
+```
+
+**2) Prompt Builder（动态 System Prompt 构建）**
+
+根据 Agent 当前阶段动态构建 System Prompt，注入评估上下文。
+
+```
+System Prompt 结构：
+
+┌─ 角色定义 ───────────────────────────────────────────────┐
+│  你是一位专业的简历优化顾问，基于 HAY 岗位价值评估体系     │
+│  帮助应届生优化简历。你已经完成了对用户的专业评估。         │
+└─────────────────────────────────────────────────────────┘
+┌─ 评估上下文注入 ─────────────────────────────────────────┐
+│  用户评估结果：Grade {X}, 薪资 {range}                    │
+│  HAY 8 因素：PK={pk}, MK={mk}, ...                      │
+│  5 维能力：专业力={x}, 管理力={y}, ...                    │
+│  最弱维度：{weakest}，最强维度：{strongest}               │
+│  目标岗位：{city} · {industry} · {function}              │
+└─────────────────────────────────────────────────────────┘
+┌─ 简历段落 & 当前状态 ───────────────────────────────────┐
+│  简历共 {N} 段经历，当前处理到第 {i} 段                   │
+│  已优化段落：[{已完成的段落及优化结果}]                    │
+│  当前段落原文："{当前段落内容}"                            │
+└─────────────────────────────────────────────────────────┘
+┌─ 行为规则 ───────────────────────────────────────────────┐
+│  1. 每次只处理一段经历，不要跳跃                          │
+│  2. 先诊断问题，再追问细节，最后给出改写建议               │
+│  3. 每条优化建议必须关联到具体的 HAY 因素变化              │
+│  4. 语气亲切专业，像学长/导师，不要过于正式                │
+│  5. 用户确认后再进入下一段                                │
+│  6. 改写建议中的数据必须基于用户提供的信息，不能编造       │
+│  7. 回复控制在 200 字以内，简洁有力                       │
+└─────────────────────────────────────────────────────────┘
+```
+
+**3) Resume Structurer（简历结构化拆分）**
+
+将原始简历文本拆分为可独立优化的段落。
+
+```
+输入：原始简历文本（纯文本）
+输出：结构化段落列表
+
+实现方式：LLM 辅助拆分（一次调用，非对话式）
+
+拆分 Prompt 输出格式：
+[
+    {
+        "id": 1,
+        "type": "education",           # education / internship / project / competition / skill / other
+        "title": "教育经历 - XX大学",
+        "original_text": "XX大学 计算机科学与技术 本科 2022-2026",
+        "optimizable": false           # 教育经历通常不需要改写
+    },
+    {
+        "id": 2,
+        "type": "internship",
+        "title": "实习经历 - XX公司",
+        "original_text": "在XX公司实习，负责数据分析工作...",
+        "optimizable": true
+    },
+    ...
+]
+```
+
+**4) Value Simulator（价值提升模拟）**
+
+基于优化后的简历内容，模拟重新评估后的 HAY 因素变化。
+
+```
+实现思路（两种方案）：
+
+方案 A（轻量级，推荐 MVP）：
+  • Agent 在对话中基于规则预估因素变化
+  • 例：增加量化数据 → 专业力 +0.5 档（规则表）
+  • 最终将因素变化代入现有薪资计算引擎
+  • 优点：实现简单，成本低
+  • 缺点：预估粗糙
+
+方案 B（重量级，后期迭代）：
+  • 将优化后的简历文本重新跑一遍完整评估流程
+  • 用优化后的评估结果 vs 原始结果做对比
+  • 优点：结果精确
+  • 缺点：LLM 调用成本高，耗时长
+```
+
+#### 新增 API 设计
+
+```
+POST /api/chat/start
+  描述：创建简历优化会话
+  请求：{ "logId": 12345 }    ← 关联到之前的评估记录
+  响应：{
+    "sessionId": "uuid",
+    "firstMessage": "你好！我已经看过你的简历..."   ← Agent 开场白
+  }
+  内部逻辑：
+    1. 根据 logId 从数据库查询评估结果和原始简历
+    2. 调用 Resume Structurer 拆分简历段落
+    3. 构建初始 System Prompt
+    4. 生成 Agent 开场白
+    5. 创建会话记录
+
+─────────────────────────────────────────────────
+
+POST /api/chat/message
+  描述：发送用户消息，流式返回 Agent 回复
+  请求：{
+    "sessionId": "uuid",
+    "message": "我用Python做的留存分析..."
+  }
+  响应：SSE 流（text/event-stream）
+    data: {"type": "text", "content": "很好！"}
+    data: {"type": "text", "content": "建议改写为..."}
+    data: {"type": "section_updated", "sectionId": 2, "status": "optimized"}
+    data: {"type": "progress", "completed": 2, "total": 5}
+    data: {"type": "done"}
+  内部逻辑：
+    1. 将用户消息追加到 messages 数组
+    2. 根据当前 agent_state 更新 System Prompt
+    3. 调用 DeepSeek API（stream=True）
+    4. 流式返回 Agent 回复
+    5. 解析 Agent 回复中的状态变更（段落优化完成等）
+    6. 更新会话状态
+
+─────────────────────────────────────────────────
+
+GET /api/chat/history?sessionId=uuid
+  描述：获取历史对话（断线重连 / 刷新恢复）
+  响应：{
+    "messages": [...],
+    "agentState": {...},
+    "resumeSections": [...]
+  }
+
+─────────────────────────────────────────────────
+
+POST /api/chat/export
+  描述：导出优化后的简历内容
+  请求：{ "sessionId": "uuid" }
+  响应：{
+    "optimizedSections": [...],
+    "summary": {
+      "originalGrade": 11,
+      "estimatedGrade": 12,
+      "originalSalary": "15.2k~18.5k",
+      "estimatedSalary": "18.5k~22.1k",
+      "healthScoreBefore": 58,
+      "healthScoreAfter": 82
+    },
+    "fullText": "优化后的完整简历文本..."
+  }
+```
+
+#### 数据库设计（新增表）
+
+```sql
+-- 会话表
+CREATE TABLE chat_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    assessment_log_id INTEGER REFERENCES assessment_logs(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'active',    -- active / completed / expired
+    agent_state JSONB,                                -- Agent 状态机（phase, sections, progress）
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    completed_at TIMESTAMP,
+    estimated_grade_after INTEGER,                    -- 优化后预估 Grade
+    estimated_salary_after VARCHAR(100)               -- 优化后预估薪资
+);
+
+-- 消息表
+CREATE TABLE chat_messages (
+    id SERIAL PRIMARY KEY,
+    session_id UUID REFERENCES chat_sessions(id),
+    role VARCHAR(20) NOT NULL,                        -- user / assistant / system
+    content TEXT NOT NULL,
+    metadata JSONB,                                   -- 附加信息（段落更新、进度等）
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 优化记录表
+CREATE TABLE resume_optimizations (
+    id SERIAL PRIMARY KEY,
+    session_id UUID REFERENCES chat_sessions(id),
+    section_index INTEGER NOT NULL,
+    section_type VARCHAR(50),                         -- internship / project / competition / etc.
+    original_text TEXT NOT NULL,
+    optimized_text TEXT,
+    improvement_notes TEXT,                            -- "专业力 D+ → E-"
+    status VARCHAR(20) DEFAULT 'pending',             -- pending / optimized / skipped
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### 流式输出实现（SSE）
+
+```python
+# 当前 LLM 调用方式（同步，需改造）
+# llm_service.py 中新增流式方法
+
+def stream_chat_completion(self, messages, on_chunk=None):
+    """流式调用 DeepSeek，逐 token 返回"""
+    response = self.client.chat.completions.create(
+        model=self.model,
+        messages=messages,
+        temperature=0.7,      # 对话场景适当提高温度
+        stream=True           # 关键：开启流式
+    )
+    full_content = ""
+    for chunk in response:
+        if chunk.choices[0].delta.content:
+            token = chunk.choices[0].delta.content
+            full_content += token
+            if on_chunk:
+                on_chunk(token)
+            yield token
+    return full_content
+```
+
+```python
+# Flask SSE 响应（mini_api.py 新增）
+
+from flask import Response, stream_with_context
+
+@app.route('/api/chat/message', methods=['POST'])
+def chat_message():
+    data = request.json
+    session_id = data['sessionId']
+    user_message = data['message']
+
+    def generate():
+        # 1. 加载会话上下文
+        # 2. 追加用户消息
+        # 3. 流式调用 LLM
+        for token in agent_service.process_message(session_id, user_message):
+            yield f"data: {json.dumps({'type': 'text', 'content': token})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        content_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no'       # Nginx 不缓冲
+        }
+    )
+```
+
+### 8.4 前端 Chatbot 组件设计
+
+#### 嵌入方式
+
+```
+方案：在评估结果页面底部/侧边添加 Chatbot 入口
+
+┌─────────────────────────────────────────────────┐
+│              评估结果页面（现有）                  │
+│                                                  │
+│  薪资区间：15.2k ~ 18.5k                         │
+│  趣味标签：学术新锐                               │
+│  五维雷达图：[图]                                 │
+│  深度洞察：[文本]                                 │
+│                                                  │
+│  ┌───────────────────────────────────────────┐   │
+│  │  💡 想让简历更值钱？                       │   │
+│  │  AI 简历优化师可以帮你逐条改写简历，        │   │
+│  │  预估优化后薪资提升空间                     │   │
+│  │                                            │   │
+│  │        [ 开始优化简历 →  ]                  │   │
+│  └───────────────────────────────────────────┘   │
+│                                                  │
+│  点击后 →                                        │
+│                                                  │
+│  ┌───────────────────────────────────────────┐   │
+│  │  ┌─ AI 简历优化师 ──────────────── ✕ ─┐  │   │
+│  │  │                                     │  │   │
+│  │  │  🤖 你好！我已经看过你的简历和评估   │  │   │
+│  │  │  结果了。你目前的评估是...           │  │   │
+│  │  │                                     │  │   │
+│  │  │  先来看你的第一段经历——              │  │   │
+│  │  │  "在XX公司实习，负责数据分析工作"    │  │   │
+│  │  │  ...                                │  │   │
+│  │  │                                     │  │   │
+│  │  │  ─────────────────────────────      │  │   │
+│  │  │  [          输入消息...        ] [➤] │  │   │
+│  │  └─────────────────────────────────────┘  │   │
+│  └───────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────┘
+```
+
+#### 前端技术要点
+
+```
+1. SSE 连接
+   • 使用 EventSource API 或 fetch + ReadableStream
+   • 支持断线自动重连
+   • 消息逐字渲染（打字机效果）
+
+2. 消息渲染
+   • 支持 Markdown（加粗、列表、代码块）
+   • 支持 ❌ ✅ 等诊断标记
+   • Before → After 对比卡片
+
+3. 状态展示
+   • 顶部进度条：已优化 2/5 段经历
+   • 实时更新的价值提升预估
+
+4. 导出功能
+   • 复制优化后的文本到剪贴板
+   • 下载为纯文本文件
+```
+
+### 8.5 后端文件结构（新增）
+
+```
+student-value-backend/
+├── mini_api.py                      # 新增 /api/chat/* 路由
+├── llm_service.py                   # 新增 stream_chat_completion() 方法
+├── resume_agent/                    # ⭐ 新增模块
+│   ├── __init__.py
+│   ├── agent_service.py             # Agent 核心逻辑（状态机驱动）
+│   ├── session_manager.py           # 会话 CRUD + 状态管理
+│   ├── prompt_builder.py            # 动态 System Prompt 构建
+│   ├── resume_structurer.py         # 简历结构化拆分（LLM 辅助）
+│   └── value_simulator.py           # 价值提升模拟计算
+└── ...
+```
+
+### 8.6 分阶段实施路径
+
+#### Phase 1：基础对话能力（MVP，建议优先）
+
+```
+目标：跑通 "评估 → 进入对话 → 逐条优化 → 导出" 的完整链路
+
+开发内容：
+├─ 后端
+│  ├─ resume_agent/ 模块基础框架
+│  ├─ Session Manager（内存存储，暂不用数据库）
+│  ├─ Resume Structurer（LLM 拆分简历段落）
+│  ├─ Prompt Builder（基础版 System Prompt）
+│  ├─ LLM 流式输出（stream=True）
+│  ├─ SSE 响应端点（/api/chat/message）
+│  └─ 会话创建端点（/api/chat/start）
+│
+├─ 前端
+│  ├─ 基础聊天窗口组件
+│  ├─ SSE 消息接收 + 打字机渲染
+│  └─ "开始优化简历" 入口按钮
+│
+└─ 验证指标
+   ├─ 用户是否愿意进入对话（点击率）
+   ├─ 平均对话轮数（衡量参与度）
+   └─ 对话完成率（走完全部经历的比例）
+```
+
+#### Phase 2：质量提升 + 数据持久化
+
+```
+目标：提升优化建议质量，支持会话恢复
+
+开发内容：
+├─ 后端
+│  ├─ PostgreSQL 会话/消息持久化（3 张新表）
+│  ├─ 对话历史恢复（GET /api/chat/history）
+│  ├─ Prompt 优化迭代（基于 Phase 1 真实对话数据调优）
+│  ├─ Value Simulator 基础版（规则表预估因素变化）
+│  └─ 导出功能（POST /api/chat/export）
+│
+├─ 前端
+│  ├─ 进度条展示（已优化 N/M 段）
+│  ├─ 价值提升实时预估展示
+│  ├─ Before → After 对比卡片
+│  └─ 导出/复制功能
+│
+└─ 验证指标
+   ├─ 用户满意度（对话结束后评分）
+   ├─ 导出率（完成对话后是否导出）
+   └─ 复访率（是否回来继续优化）
+```
+
+#### Phase 3：付费闭环 + 精细化
+
+```
+目标：接入付费，优化商业模型
+
+开发内容：
+├─ 后端
+│  ├─ 付费验证中间件（对话开始前检查付费状态）
+│  ├─ Value Simulator 进阶版（重新跑评估流程）
+│  ├─ 会话次数/时长限制
+│  └─ 数据分析仪表盘（对话指标统计）
+│
+├─ 前端
+│  ├─ 付费引导页面（展示诊断预览 → 付费解锁完整对话）
+│  ├─ 微信/支付宝支付集成
+│  └─ 会话历史列表（我的优化记录）
+│
+└─ 验证指标
+   ├─ 付费转化率
+   ├─ 客单价 & LTV
+   └─ LLM 调用成本 vs 收入
+```
+
+### 8.7 成本预估
+
+```
+单次完整对话的 LLM 调用成本（DeepSeek）：
+
+• 简历结构化拆分：1 次调用 ≈ 2k tokens
+• Agent 对话：约 10-20 轮 × 平均 2k tokens/轮 ≈ 20k-40k tokens
+• System Prompt（含上下文）：每轮约 1.5k tokens
+• 总计：约 35k-60k tokens / 次完整对话
+
+DeepSeek 定价（参考）：
+• 输入：¥1 / 百万 tokens
+• 输出：¥2 / 百万 tokens
+• 单次对话成本约：¥0.05 - ¥0.10
+
+结论：LLM 成本极低，即使定价 9.9 元也有足够利润空间。
+```
+
+### 8.8 关键风险 & 应对
+
+| 风险 | 影响 | 应对策略 |
+|------|------|---------|
+| Agent 回复质量不稳定 | 用户体验差 | Phase 1 收集真实对话数据，迭代 Prompt；加入人工审核采样 |
+| 对话过长用户失去耐心 | 完成率低 | 控制单次回复长度 ≤200 字；允许跳过不想优化的段落 |
+| 用户期望过高 | 口碑风险 | 开场白明确定位"建议"而非"保证"；价值预估标注"仅供参考" |
+| LLM 编造用户没有的经历 | 信任崩塌 | Prompt 严格约束：只能基于用户提供的信息改写，不能凭空编造 |
+| 并发压力（多人同时对话） | 服务不稳 | Session Manager 支持多会话隔离；DeepSeek API 有速率限制需处理 |
+
+---
+
+## 九、待讨论问题（更新）
+
+1. ~~交互形态~~ → 已确定为 Chatbot Agent，嵌入网页
+2. **付费节点**：是在点击"开始优化简历"时付费，还是免费聊 2 轮后再付费解锁？
+3. **对话轮数上限**：是否限制单次会话的最大对话轮数？
+4. **LLM 选型**：Agent 对话是否继续用 DeepSeek，还是考虑其他模型（如 Claude）？
+5. **前端技术栈**：Chatbot 前端用什么框架？是否需要独立的前端项目？
+6. **是否支持二次优化**：用户改完一次后，过几天能不能回来继续改？
