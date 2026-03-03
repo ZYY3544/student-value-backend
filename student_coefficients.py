@@ -60,14 +60,14 @@ def apply_student_coefficients(
 
 def format_salary_k(low_wan: float, high_wan: float) -> str:
     """
-    将万元薪酬转为 k 格式
+    将年薪万元转为月度基本工资 k 格式（保留一位小数）
 
-    e.g. 25.6万 → 256k, 30.1万 → 301k
-    薪酬格式: "256k-301k"
+    e.g. 25.6万/年 → 21.3k/月, 30.1万/年 → 25.1k/月
+    薪酬格式: "21.3k~25.1k"
     """
-    low_k = round(low_wan * 10)
-    high_k = round(high_wan * 10)
-    return f"{low_k}k-{high_k}k"
+    low_k = round(low_wan * 10 / 12, 1)
+    high_k = round(high_wan * 10 / 12, 1)
+    return f"{low_k}k~{high_k}k"
 
 
 if __name__ == "__main__":
@@ -81,4 +81,4 @@ if __name__ == "__main__":
     for low, high, tier, edu, expected_factor in tests:
         adj_low, adj_high = apply_student_coefficients(low, high, tier, edu)
         salary_str = format_salary_k(adj_low, adj_high)
-        print(f"  {tier}/{edu}: {low}万-{high}万 × {expected_factor:.4f} → {salary_str}")
+        print(f"  {tier}/{edu}: 年{low}万-{high}万 × {expected_factor:.4f} → 月{salary_str}")

@@ -734,7 +734,7 @@ def assess():
 
         adj_low, adj_high = apply_student_coefficients(base_low, base_high, school_tier, education_level)
         salary_range = format_salary_k(adj_low, adj_high)
-        print(f"[学生版] 薪酬: 基础{base_low:.0f}-{base_high:.0f}万 × {school_tier}/{education_level} → {salary_range}")
+        print(f"[学生版] 薪酬: 基础{base_low:.0f}-{base_high:.0f}万/年 × {school_tier}/{education_level} → 月{salary_range}")
 
         # 5. 8因素 → 5能力映射
         print("[步骤4] 能力映射...")
@@ -884,6 +884,7 @@ def assess():
             'success': True,
             'data': {
                 'salaryRange': salary_range,
+                'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
                 'level': job_grade,
                 'levelTag': level_tag,
                 'levelDesc': level_desc,
@@ -972,6 +973,7 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
         'success': True,
         'data': {
             'salaryRange': salary_range,
+            'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
             'level': job_grade,
             'levelTag': "萌新探路者",
             'levelDesc': "刚踏出校门第一步，世界很大，你的好奇心更大。起点不决定终点，你的故事才刚刚开始写呢。",
