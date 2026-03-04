@@ -1,17 +1,30 @@
 """
 ===========================================
-简历优化 Agent 模块 (Resume Optimization Agent)
+简历优化多 Agent 系统 (Multi-Agent Resume Optimizer)
 ===========================================
-基于 HAY 评估结果，通过多轮对话帮助用户优化简历
+基于 HAY 评估结果，通过多 Agent 协作帮助用户优化简历
 
-核心能力：
-1. 会话管理（内存存储，支持多用户并发）
-2. 动态 Prompt 构建（首尾强化 + 降噪排序）
-3. 简历结构化拆分（LLM 辅助）
-4. 多阶段对话控制（开场 → 诊断 → 优化 → 总结）
-5. 结构化记忆（关键信息锚定，防止上下文腐烂）
-6. 对话历史压缩与降噪
-7. SSE 流式输出
+架构：
+┌──────────────────────────────────────────┐
+│  ChatAgent（协调者/Orchestrator）          │
+│  职责：会话管理、阶段路由、上下文传递       │
+└──────┬──────────┬──────────┬─────────────┘
+       │          │          │
+  DiagnosisAgent  OptimizeAgent  ReportAgent
+  (开场诊断)       (简历优化)     (总结报告)
+  专精HAY分析     专精段落改写    专精报告生成
+  单轮·低温度     短轮·中温度    单轮·低温度
+
+每个子 Agent 的优势：
+1. Prompt 极其详尽（不用担心互相稀释）
+2. 每次调用上下文干净（不存在上下文腐烂）
+3. 可独立调参（温度、模型、超时等）
+
+核心模块：
+1. ConversationMemory - 结构化记忆（跨 Agent 共享）
+2. SessionManager - 会话管理
+3. HistoryCompressor - 对话历史压缩
+4. ChatAgent - 协调者（对外接口不变）
 """
 
 import uuid
@@ -22,6 +35,8 @@ from datetime import datetime
 from typing import Dict, Optional, List, Generator
 from openai import OpenAI
 
+from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
+
 
 # ===========================================
 # 结构化记忆
@@ -31,8 +46,9 @@ class ConversationMemory:
     """
     结构化记忆管理器
 
-    从对话流中提取关键信息，独立存储，每轮注入 prompt。
+    从对话流中提取关键信息，独立存储，每轮注入子 Agent 的上下文。
     对话历史可以压缩/丢弃，但结构化记忆不会丢失。
+    这是跨 Agent 共享的状态——所有子 Agent 都能看到。
     """
 
     def __init__(self):
@@ -68,7 +84,7 @@ class ConversationMemory:
 
         if self.optimized_sections:
             sections = "、".join(self.optimized_sections)
-            parts.append(f"【已优化过的段落】{sections}")
+            parts.append(f"【已优化过的段落（不要重复优化，除非用户要求）】{sections}")
 
         if self.user_preferences:
             prefs = "\n".join(f"  - {k}: {v}" for k, v in self.user_preferences.items())
@@ -115,7 +131,7 @@ class SessionManager:
             "assessment_context": assessment_context,
             "resume_text": resume_text,
             "resume_sections": None,  # 结构化拆分后填充
-            "memory": ConversationMemory(),  # 结构化记忆
+            "memory": ConversationMemory(),  # 结构化记忆（跨 Agent 共享）
             "compressed_history": "",  # 压缩后的早期对话摘要
             "message_count": 0,  # 总消息计数（用于判断是否需要压缩）
         }
@@ -123,7 +139,7 @@ class SessionManager:
         with self._lock:
             self._sessions[session_id] = session
 
-        print(f"[Agent] 创建会话 {session_id[:8]}...")
+        print(f"[Orchestrator] 创建会话 {session_id[:8]}...")
         return session_id
 
     def get_session(self, session_id: str) -> Optional[dict]:
@@ -135,7 +151,7 @@ class SessionManager:
             # 检查过期
             if time.time() - session["updated_at"] > self._ttl:
                 del self._sessions[session_id]
-                print(f"[Agent] 会话 {session_id[:8]} 已过期，已清理")
+                print(f"[Orchestrator] 会话 {session_id[:8]} 已过期，已清理")
                 return None
             return session
 
@@ -165,7 +181,7 @@ class SessionManager:
             for sid in expired:
                 del self._sessions[sid]
             if expired:
-                print(f"[Agent] 清理了 {len(expired)} 个过期会话")
+                print(f"[Orchestrator] 清理了 {len(expired)} 个过期会话")
 
 
 # ===========================================
@@ -242,10 +258,10 @@ class HistoryCompressor:
                 temperature=0.0,
             )
             summary = response.choices[0].message.content.strip()
-            print(f"[Agent] 对话历史压缩完成，原 {len(to_compress)} 条消息 → 摘要")
+            print(f"[Orchestrator] 对话历史压缩完成，原 {len(to_compress)} 条消息 → 摘要")
             return summary
         except Exception as e:
-            print(f"[Agent] 对话历史压缩失败: {e}")
+            print(f"[Orchestrator] 对话历史压缩失败: {e}")
             return existing_summary
 
     @staticmethod
@@ -302,237 +318,7 @@ class HistoryCompressor:
                 memory.pending_questions = [result["pending_question"]]  # 只保留最新的
 
         except Exception as e:
-            print(f"[Agent] 记忆提取失败（非阻塞）: {e}")
-
-
-# ===========================================
-# Prompt 构建器（首尾强化 + 降噪排序）
-# ===========================================
-
-class PromptBuilder:
-    """
-    动态构建 Prompt（遵循长上下文最佳实践）
-
-    结构（从上到下）：
-    ┌─────────────────────────────┐
-    │ System Prompt（首部高注意力） │
-    │ = 核心身份 + 行为规则        │
-    ├─────────────────────────────┤
-    │ <history>                    │
-    │ 压缩摘要 + 最近原始对话      │
-    │ </history>                   │
-    ├─────────────────────────────┤
-    │ <context>                    │
-    │ 评测结果 + 简历 + 结构化记忆  │
-    │ </context>                   │
-    ├─────────────────────────────┤
-    │ <task>（尾部高注意力）        │
-    │ 当前阶段精简指令 + 核心提醒   │
-    │ </task>                      │
-    └─────────────────────────────┘
-    """
-
-    @staticmethod
-    def build_system_prompt(session: dict) -> str:
-        """
-        构建 system prompt（首部）
-
-        只放核心身份和行为规则，利用首部高注意力权重建立任务基调
-        """
-        return """你是一位资深的简历优化顾问，同时也是 HAY 岗位评估体系的专家。
-你的使命是帮助用户基于 HAY 评估结果，针对性地优化简历，提升职场竞争力。
-
-【你的核心能力】
-- 精通 HAY 评估体系的 8 个因素（专业知识PK、管理知识MK、沟通Comm、思维环境TE、思维挑战TC、行动自由FTA、影响范围M、影响性质NI）
-- 能够从简历文字中识别出哪些因素被低估，哪些信息缺失
-- 能给出具体的、可操作的简历修改建议
-- 语气友好专业，像一位有经验的职业导师
-
-【关键原则】
-- 所有建议必须基于用户的真实经历，绝不编造
-- 区分"呈现不足"（简历没写好）和"能力不足"（确实缺乏经历）
-- 对于呈现不足：帮用户重新组织语言，突出价值
-- 对于能力不足：建议补充经历（实习/项目/竞赛），而非凭空捏造
-- 每条建议要说清楚"改了之后，对评估的哪个维度有提升"
-"""
-
-    @staticmethod
-    def build_user_prompt(session: dict) -> str:
-        """
-        构建注入到最新 user message 前的上下文块
-
-        结构：<history> + <context> + <task>
-        利用尾部高注意力权重，把当前阶段指令放在最后
-        """
-        phase = session["phase"]
-        ctx = session["assessment_context"]
-        resume_text = session["resume_text"]
-        memory: ConversationMemory = session["memory"]
-        compressed_history = session.get("compressed_history", "")
-
-        parts = []
-
-        # === <history> 压缩后的早期对话摘要 ===
-        if compressed_history:
-            parts.append(f"""<history>
-【早期对话摘要】
-{compressed_history}
-</history>""")
-
-        # === <context> 评测结果 + 简历 + 结构化记忆 ===
-        context_section = PromptBuilder._build_context_section(ctx, resume_text, memory)
-        parts.append(f"""<context>
-{context_section}
-</context>""")
-
-        # === <task> 当前阶段精简指令（尾部高注意力） ===
-        task_section = PromptBuilder._build_task_section(phase, ctx, memory)
-        parts.append(f"""<task>
-{task_section}
-</task>""")
-
-        return "\n\n".join(parts)
-
-    @staticmethod
-    def _build_context_section(ctx: dict, resume_text: str, memory: ConversationMemory) -> str:
-        """构建 <context> 块：评测结果 + 简历 + 结构化记忆"""
-        factors = ctx.get("factors", {})
-        abilities = ctx.get("abilities", {})
-        grade = ctx.get("grade", "未知")
-        salary = ctx.get("salaryRange", "未知")
-        job_title = ctx.get("jobTitle", "未知")
-        job_function = ctx.get("jobFunction", "未知")
-
-        # 构建因素描述
-        factor_names = {
-            "practical_knowledge": "专业知识(PK)",
-            "managerial_knowledge": "管理知识(MK)",
-            "communication": "沟通技巧(Comm)",
-            "thinking_environment": "思维环境(TE)",
-            "thinking_challenge": "思维挑战(TC)",
-            "freedom_to_act": "行动自由(FTA)",
-            "magnitude": "影响范围(M)",
-            "nature_of_impact": "影响性质(NI)",
-        }
-
-        factors_text = "\n".join(
-            f"  - {factor_names.get(k, k)}: {v}"
-            for k, v in factors.items()
-        )
-
-        # 构建能力描述
-        abilities_text = "\n".join(
-            f"  - {name}: {info.get('score', '?')}分 ({info.get('level', '?')})"
-            for name, info in abilities.items()
-        ) if isinstance(abilities, dict) else "  暂无能力数据"
-
-        # 简历内容（截断保护）
-        resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
-
-        section = f"""【用户的评测结果 - 这是你分析的基础】
-- 目标岗位: {job_title}
-- 所属职能: {job_function}
-- 评估职级: {grade}
-- 薪酬区间: {salary}
-
-HAY 8因素档位:
-{factors_text}
-
-5维能力得分:
-{abilities_text}
-
-【用户的简历内容】
-{resume_preview}"""
-
-        # 结构化记忆（如果有的话）
-        if memory.has_content():
-            section += f"\n\n{memory.to_context_string()}"
-
-        return section
-
-    @staticmethod
-    def _build_task_section(phase: str, ctx: dict, memory: ConversationMemory) -> str:
-        """
-        构建 <task> 块：当前阶段精简指令
-
-        放在 prompt 最尾部，利用尾部高注意力权重防止阶段漂移
-        """
-
-        if phase == "opening":
-            # 找出最弱的能力维度
-            abilities = ctx.get("abilities", {})
-            weak_abilities = []
-            if isinstance(abilities, dict):
-                sorted_abs = sorted(abilities.items(),
-                                    key=lambda x: x[1].get("score", 50))
-                weak_abilities = [name for name, info in sorted_abs[:2]]
-
-            weak_text = "、".join(weak_abilities) if weak_abilities else "部分维度"
-
-            return f"""【当前阶段：开场诊断】
-
-你的任务是：
-1. 简短问候用户（1句话）
-2. 快速总结评测结果的亮点和短板（2-3句话），重点提及{weak_text}的提升空间
-3. 提出 2-3 个你能帮忙优化的具体方向（列出来让用户选择），例如：
-   - "实习/工作经历的描述可以更突出成果"
-   - "项目经历缺少量化数据"
-   - "可以补充一段能体现XX能力的经历"
-4. 问用户想从哪里开始
-
-【格式要求】
-- 总字数控制在 200-300 字
-- 语气温暖专业，不要过于正式
-- 用 **双星号** 高亮关键词
-- 不要使用 markdown 标题或列表符号，用自然语言组织
-
-⚠️ 核心提醒：你现在处于【开场诊断】阶段，只做诊断和方向推荐，不要直接给出具体的修改建议。"""
-
-        elif phase == "optimizing":
-            # 动态注入已优化的段落信息，避免重复
-            avoid_text = ""
-            if memory.optimized_sections:
-                sections = "、".join(memory.optimized_sections)
-                avoid_text = f"\n- 已优化过的段落（{sections}）不要重复优化，除非用户主动要求"
-
-            return f"""【当前阶段：优化建议】
-
-你的任务是：
-1. 针对用户提到的问题或选择的方向，给出具体建议
-2. 如果是某段经历需要改写，给出修改前后的对比
-3. 每条建议说明"这样改，可以提升哪个能力维度"
-4. 一次聚焦 1-2 个点，不要一口气给太多
-5. 改完一个点后，询问用户是否满意，以及要不要继续改其他部分
-
-【格式要求】
-- 修改建议用具体的文字示范，不要只说"你应该加上量化数据"
-- 对比格式：先展示原文（标注问题），再展示改写版本
-- 保持对话感，不要写成报告
-- 语气鼓励为主
-
-【重要】
-- 你给出的改写必须基于简历中已有的信息进行润色和重组
-- 如果需要用户补充信息（比如具体数字、项目成果），要主动追问
-- 不要自己编造用户没提到的经历或数据{avoid_text}
-
-⚠️ 核心提醒：你现在处于【优化建议】阶段，请专注于给出具体可操作的修改建议。"""
-
-        elif phase == "summary":
-            return """【当前阶段：总结回顾】
-
-你的任务是：
-1. 总结本次优化了哪些内容
-2. 指出优化后预计能提升哪些能力维度
-3. 给出 1-2 个后续建议（下次可以继续优化的方向，或者需要补充的经历）
-4. 鼓励用户
-
-【格式要求】
-- 简洁明了，200字以内
-- 正能量收尾
-
-⚠️ 核心提醒：你现在处于【总结回顾】阶段，请做最终总结，不要再引入新的优化点。"""
-
-        return ""
+            print(f"[Orchestrator] 记忆提取失败（非阻塞）: {e}")
 
 
 # ===========================================
@@ -588,37 +374,64 @@ def split_resume_sections(client: OpenAI, model: str, resume_text: str) -> List[
         else:
             sections = []
 
-        print(f"[Agent] 简历拆分完成，共 {len(sections)} 个段落")
+        print(f"[Orchestrator] 简历拆分完成，共 {len(sections)} 个段落")
         return sections
 
     except Exception as e:
-        print(f"[Agent] 简历拆分失败: {e}")
+        print(f"[Orchestrator] 简历拆分失败: {e}")
         # 降级：整体作为一个段落
         return [{"type": "other", "title": "完整简历", "content": resume_text}]
 
 
 # ===========================================
-# Chat Agent 核心类
+# Chat Agent（协调者 / Orchestrator）
 # ===========================================
 
 class ChatAgent:
     """
-    简历优化对话 Agent
+    简历优化多 Agent 协调者
 
-    使用方式：
-        agent = ChatAgent(llm_service)
-        session_id = agent.start_session(assessment_context, resume_text)
-        response_stream = agent.chat(session_id, user_message)
+    职责极简：
+    1. 管理会话生命周期
+    2. 根据阶段路由到对应的子 Agent
+    3. 传递上下文（评测结果、简历、记忆、对话摘要）
+    4. 后处理（记忆提取、历史压缩）
+
+    对外接口不变：
+        agent = ChatAgent(client, model)
+        result = agent.start_session(assessment_context, resume_text)
+        reply = agent.chat(session_id, user_message)
+        stream = agent.chat_stream(session_id, user_message)
+        history = agent.get_history(session_id)
     """
+
+    # 触发总结阶段的关键词
+    SUMMARY_KEYWORDS = ["总结", "结束", "就这些", "谢谢", "没了", "差不多了"]
 
     def __init__(self, client: OpenAI, model: str = "deepseek-chat"):
         self.client = client
         self.model = model
         self.session_manager = SessionManager(ttl_seconds=3600)
 
+        # 初始化子 Agent（每个 Agent 拥有独立的 Prompt，共享 LLM client）
+        self.diagnosis_agent = DiagnosisAgent(client, model)
+        self.optimize_agent = OptimizeAgent(client, model)
+        self.report_agent = ReportAgent(client, model)
+
+        print("[Orchestrator] 多 Agent 系统初始化完成")
+        print(f"  - DiagnosisAgent: 开场诊断（温度 {DiagnosisAgent.TEMPERATURE}）")
+        print(f"  - OptimizeAgent:  简历优化（温度 {OptimizeAgent.TEMPERATURE}）")
+        print(f"  - ReportAgent:    总结报告（温度 {ReportAgent.TEMPERATURE}）")
+
     def start_session(self, assessment_context: dict, resume_text: str) -> dict:
         """
         开启新的对话会话
+
+        流程：
+        1. 创建会话
+        2. 调用 DiagnosisAgent 生成开场诊断
+        3. 后台拆分简历结构
+        4. 进入优化阶段
 
         Args:
             assessment_context: 评测结果（包含 factors, abilities, grade, salary 等）
@@ -641,117 +454,85 @@ class ChatAgent:
                     "resume_sections": sections
                 })
             except Exception as e:
-                print(f"[Agent] 简历拆分失败（非阻塞）: {e}")
+                print(f"[Orchestrator] 简历拆分失败（非阻塞）: {e}")
 
-        # 生成开场白
-        greeting = self._generate_opening(session_id)
+        # ===== 调用 DiagnosisAgent 生成开场白 =====
+        print(f"[Orchestrator] 路由 → DiagnosisAgent（开场诊断）")
+        greeting = self.diagnosis_agent.diagnose(
+            assessment_context=assessment_context,
+            resume_text=resume_text
+        )
+
+        # 保存到对话历史
+        self.session_manager.add_message(session_id, "user", "你好，帮我看看简历怎么改")
+        self.session_manager.add_message(session_id, "assistant", greeting)
+
+        # 开场完成后进入优化阶段
+        self.session_manager.update_session(session_id, {"phase": "optimizing"})
 
         return {
             "session_id": session_id,
             "greeting": greeting
         }
 
-    def _generate_opening(self, session_id: str) -> str:
-        """生成开场白（非流式，用于 start 接口）"""
-        session = self.session_manager.get_session(session_id)
-        if not session:
-            return "会话创建失败，请重试。"
-
-        system_prompt = PromptBuilder.build_system_prompt(session)
-        user_context = PromptBuilder.build_user_prompt(session)
-
-        # 首尾强化：system prompt 在首部，task 指令在尾部（user message 中）
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_context + "\n\n用户说：你好，帮我看看简历怎么改"}
-        ]
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.5,
-            )
-            greeting = response.choices[0].message.content.strip()
-
-            # 保存到对话历史
-            self.session_manager.add_message(session_id, "user", "你好，帮我看看简历怎么改")
-            self.session_manager.add_message(session_id, "assistant", greeting)
-
-            # 开场完成后进入优化阶段
-            self.session_manager.update_session(session_id, {"phase": "optimizing"})
-
-            return greeting
-        except Exception as e:
-            print(f"[Agent] 开场白生成失败: {e}")
-            return "你好！我已经看过你的评测结果和简历了。准备好了就告诉我，我们可以开始优化简历。"
-
-    def _prepare_messages(self, session: dict) -> list:
+    def _get_agent_context(self, session: dict) -> dict:
         """
-        构建发送给 LLM 的消息列表
+        从 session 中提取子 Agent 需要的上下文
 
-        遵循首尾强化原则：
-        - 首部：system prompt（核心身份 + 行为规则）
-        - 中部：压缩摘要 + 最近对话历史
-        - 尾部：context + task 指令（通过 user prompt 注入）
-
-        遵循降噪排序原则：
-        - 早期对话压缩为摘要，减少噪音
-        - 最近对话原样保留，保持精确性
+        这是协调者的核心工作：把正确的上下文传给正确的 Agent
         """
-        # 首部：核心身份（高注意力区域）
-        system_prompt = PromptBuilder.build_system_prompt(session)
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # 中部：对话历史（降噪处理后）
-        history = session["messages"]
+        memory: ConversationMemory = session["memory"]
+        messages = session["messages"]
         compressed = session.get("compressed_history", "")
 
+        # 构建对话摘要：压缩历史 + 结构化记忆
+        conversation_summary = ""
         if compressed:
-            # 有压缩摘要时，只保留最近几轮原始对话
-            recent_history = history[-HistoryCompressor.KEEP_RECENT:]
-        elif len(history) > HistoryCompressor.COMPRESS_THRESHOLD:
-            # 还没压缩但已经很长，临时截断
-            recent_history = history[:2] + history[-(HistoryCompressor.KEEP_RECENT):]
-        else:
-            # 对话还不长，全部保留
-            recent_history = history
+            conversation_summary = compressed
 
-        messages.extend(recent_history)
+        # 结构化记忆
+        memory_context = memory.to_context_string() if memory.has_content() else ""
 
-        # 尾部：context + task 指令（高注意力区域）
-        # 作为最后一条 user message 的前缀注入
-        user_context = PromptBuilder.build_user_prompt(session)
+        # 最近的原始对话（保持上下文连贯性）
+        # 多 Agent 架构下，子 Agent 不需要看全部历史
+        # 只需要最近几轮 + 压缩摘要就够了
+        recent_messages = messages[-HistoryCompressor.KEEP_RECENT:] if messages else []
 
-        # 把 context+task 注入到最后一条 user message
-        if messages and messages[-1]["role"] == "user":
-            original_msg = messages[-1]["content"]
-            messages[-1] = {
-                "role": "user",
-                "content": f"{user_context}\n\n用户说：{original_msg}"
-            }
-        else:
-            # 安全兜底
-            messages.append({"role": "user", "content": user_context})
+        return {
+            "assessment_context": session["assessment_context"],
+            "resume_text": session["resume_text"],
+            "conversation_summary": conversation_summary,
+            "recent_messages": recent_messages,
+            "memory_context": memory_context,
+        }
 
-        return messages
+    def _detect_phase_transition(self, user_message: str, current_phase: str) -> str:
+        """
+        检测阶段转换
+
+        规则简单明确，协调者不需要 LLM 来判断——关键词匹配即可。
+        """
+        if current_phase == "optimizing":
+            if any(kw in user_message for kw in self.SUMMARY_KEYWORDS):
+                return "summary"
+        return current_phase
 
     def _post_chat_processing(self, session_id: str):
         """
         每轮对话后的后处理
 
-        1. 提取结构化记忆
+        1. 提取结构化记忆（供下一轮子 Agent 使用）
         2. 判断是否需要压缩对话历史
         """
         session = self.session_manager.get_session(session_id)
         if not session:
             return
 
-        # 1. 提取结构化记忆（异步，不阻塞响应）
+        # 1. 提取结构化记忆
         try:
             HistoryCompressor.extract_memory(self.client, self.model, session)
         except Exception as e:
-            print(f"[Agent] 记忆提取失败: {e}")
+            print(f"[Orchestrator] 记忆提取失败: {e}")
 
         # 2. 判断是否需要压缩
         if HistoryCompressor.should_compress(session):
@@ -759,20 +540,26 @@ class ChatAgent:
                 compressed = HistoryCompressor.compress_history(
                     self.client, self.model, session
                 )
-                # 更新摘要，并裁剪消息列表
                 keep_recent = HistoryCompressor.KEEP_RECENT
                 recent_messages = session["messages"][-keep_recent:]
                 self.session_manager.update_session(session_id, {
                     "compressed_history": compressed,
                     "messages": recent_messages,
                 })
-                print(f"[Agent] 会话 {session_id[:8]} 历史已压缩，保留最近 {len(recent_messages)} 条消息")
+                print(f"[Orchestrator] 会话 {session_id[:8]} 历史已压缩，保留最近 {len(recent_messages)} 条消息")
             except Exception as e:
-                print(f"[Agent] 历史压缩失败: {e}")
+                print(f"[Orchestrator] 历史压缩失败: {e}")
 
     def chat(self, session_id: str, user_message: str) -> Optional[str]:
         """
         处理用户消息，返回完整回复（非流式）
+
+        协调者流程：
+        1. 保存用户消息
+        2. 检测阶段转换
+        3. 路由到对应子 Agent
+        4. 保存回复
+        5. 后处理
 
         Args:
             session_id: 会话ID
@@ -788,38 +575,75 @@ class ChatAgent:
         # 保存用户消息
         self.session_manager.add_message(session_id, "user", user_message)
 
-        # 阶段控制：检查用户是否想结束
-        if any(kw in user_message for kw in ["总结", "结束", "就这些", "谢谢", "没了", "差不多了"]):
-            self.session_manager.update_session(session_id, {"phase": "summary"})
+        # 阶段转换检测
+        new_phase = self._detect_phase_transition(user_message, session["phase"])
+        if new_phase != session["phase"]:
+            print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
+            self.session_manager.update_session(session_id, {"phase": new_phase})
 
         # 重新获取更新后的 session
         session = self.session_manager.get_session(session_id)
+        phase = session["phase"]
 
-        # 构建消息（首尾强化 + 降噪排序）
-        messages = self._prepare_messages(session)
+        # 提取子 Agent 需要的上下文
+        ctx = self._get_agent_context(session)
 
+        # ===== 路由到对应的子 Agent =====
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.5,
-            )
-            reply = response.choices[0].message.content.strip()
+            if phase == "optimizing":
+                print(f"[Orchestrator] 路由 → OptimizeAgent")
+                reply = self.optimize_agent.optimize_sync(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=user_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
+            elif phase == "summary":
+                print(f"[Orchestrator] 路由 → ReportAgent")
+                reply = self.report_agent.generate_report_sync(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    conversation_summary=ctx["conversation_summary"],
+                    memory_context=ctx["memory_context"],
+                    recent_messages=ctx["recent_messages"],
+                )
+            else:
+                # opening 阶段不应该走到这里（start_session 已处理）
+                # 兜底：用 OptimizeAgent
+                print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}）")
+                reply = self.optimize_agent.optimize_sync(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=user_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
 
-            # 保存 assistant 回复
+            # 保存回复
             self.session_manager.add_message(session_id, "assistant", reply)
 
-            # 后处理：提取记忆 + 判断压缩
+            # 后处理
             self._post_chat_processing(session_id)
 
             return reply
+
         except Exception as e:
-            print(f"[Agent] 对话失败: {e}")
+            print(f"[Orchestrator] 对话失败: {e}")
             return "抱歉，处理你的消息时遇到了问题，请再试一次。"
 
     def chat_stream(self, session_id: str, user_message: str) -> Generator[str, None, None]:
         """
         处理用户消息，返回流式回复（SSE 格式）
+
+        协调者流程（与 chat 相同，但子 Agent 返回流式输出）：
+        1. 保存用户消息
+        2. 检测阶段转换
+        3. 路由到对应子 Agent（流式）
+        4. 收集完整回复并保存
+        5. 后处理
 
         Yields:
             逐块的文本内容
@@ -832,41 +656,68 @@ class ChatAgent:
         # 保存用户消息
         self.session_manager.add_message(session_id, "user", user_message)
 
-        # 阶段控制
-        if any(kw in user_message for kw in ["总结", "结束", "就这些", "谢谢", "没了", "差不多了"]):
-            self.session_manager.update_session(session_id, {"phase": "summary"})
+        # 阶段转换检测
+        new_phase = self._detect_phase_transition(user_message, session["phase"])
+        if new_phase != session["phase"]:
+            print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
+            self.session_manager.update_session(session_id, {"phase": new_phase})
 
         # 重新获取
         session = self.session_manager.get_session(session_id)
+        phase = session["phase"]
 
-        # 构建消息（首尾强化 + 降噪排序）
-        messages = self._prepare_messages(session)
+        # 提取子 Agent 需要的上下文
+        ctx = self._get_agent_context(session)
 
         full_reply = ""
 
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.5,
-                stream=True,
-            )
+            # ===== 路由到对应的子 Agent（流式） =====
+            if phase == "optimizing":
+                print(f"[Orchestrator] 路由 → OptimizeAgent（流式）")
+                stream = self.optimize_agent.optimize(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=user_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
+            elif phase == "summary":
+                print(f"[Orchestrator] 路由 → ReportAgent（流式）")
+                stream = self.report_agent.generate_report(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    conversation_summary=ctx["conversation_summary"],
+                    memory_context=ctx["memory_context"],
+                    recent_messages=ctx["recent_messages"],
+                )
+            else:
+                # 兜底
+                print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}，流式）")
+                stream = self.optimize_agent.optimize(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=user_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
 
+            # 透传流式输出，同时收集完整回复
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    text = chunk.choices[0].delta.content
-                    full_reply += text
-                    yield text
+                full_reply += chunk
+                yield chunk
 
             # 保存完整回复
             if full_reply:
                 self.session_manager.add_message(session_id, "assistant", full_reply)
 
-            # 后处理：提取记忆 + 判断压缩
+            # 后处理
             self._post_chat_processing(session_id)
 
         except Exception as e:
-            print(f"[Agent] 流式对话失败: {e}")
+            print(f"[Orchestrator] 流式对话失败: {e}")
             error_msg = "抱歉，处理消息时遇到了问题，请再试一次。"
             self.session_manager.add_message(session_id, "assistant", error_msg)
             yield error_msg
