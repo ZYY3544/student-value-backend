@@ -36,6 +36,7 @@ from typing import Dict, Optional, List, Generator
 from openai import OpenAI
 
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
+from tool_executor import ToolExecutor
 
 
 # ===========================================
@@ -411,13 +412,17 @@ class ChatAgent:
     # 表示还想继续优化的信号词（优先级高于总结关键词）
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
-    def __init__(self, client: OpenAI, model: str = "deepseek-chat"):
+    def __init__(self, client: OpenAI, model: str = "deepseek-chat",
+                 llm_service=None, convergence_engine=None):
         self.client = client
         self.model = model
+        self.llm_service = llm_service
+        self.convergence_engine = convergence_engine
         self.session_manager = SessionManager(ttl_seconds=3600)
 
         # 初始化子 Agent（每个 Agent 拥有独立的 Prompt，共享 LLM client）
         self.diagnosis_agent = DiagnosisAgent(client, model)
+        # OptimizeAgent 的 tool_executor 在 start_session 时按会话创建
         self.optimize_agent = OptimizeAgent(client, model)
         self.report_agent = ReportAgent(client, model)
 
@@ -425,6 +430,8 @@ class ChatAgent:
         print(f"  - DiagnosisAgent: 开场诊断（温度 {DiagnosisAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化（温度 {OptimizeAgent.TEMPERATURE}）")
         print(f"  - ReportAgent:    总结报告（温度 {ReportAgent.TEMPERATURE}）")
+        if llm_service and convergence_engine:
+            print(f"  - ToolExecutor:   Function Call 工具调用已启用")
 
     def start_session(self, assessment_context: dict, resume_text: str) -> dict:
         """
@@ -447,6 +454,24 @@ class ChatAgent:
             assessment_context=assessment_context,
             resume_text=resume_text
         )
+
+        # 为本次会话创建 ToolExecutor 并绑定到 OptimizeAgent
+        if self.llm_service and self.convergence_engine:
+            session = self.session_manager.get_session(session_id)
+            tool_executor = ToolExecutor(
+                llm_service=self.llm_service,
+                convergence_engine=self.convergence_engine,
+                conversation_memory=session["memory"],
+            )
+            # 缓存原始评测结果（含 resume_text），供工具使用
+            tool_executor.set_original_assessment({
+                **assessment_context,
+                "resume_text": resume_text,
+            })
+            # 存到 session 中，后续 chat/chat_stream 可取用
+            self.session_manager.update_session(session_id, {
+                "tool_executor": tool_executor,
+            })
 
         # 后台线程拆分简历（真正不阻塞开场）
         def _bg_split():
@@ -508,6 +533,7 @@ class ChatAgent:
             "conversation_summary": conversation_summary,
             "recent_messages": recent_messages,
             "memory_context": memory_context,
+            "tool_executor": session.get("tool_executor"),
         }
 
     def _detect_phase_transition(self, user_message: str, current_phase: str) -> str:
@@ -619,6 +645,8 @@ class ChatAgent:
         try:
             if phase == "optimizing":
                 print(f"[Orchestrator] 路由 → OptimizeAgent")
+                # 绑定当前会话的 tool_executor
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 reply = self.optimize_agent.optimize_sync(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
@@ -640,6 +668,7 @@ class ChatAgent:
                 # opening 阶段不应该走到这里（start_session 已处理）
                 # 兜底：用 OptimizeAgent
                 print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}）")
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 reply = self.optimize_agent.optimize_sync(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
@@ -702,6 +731,8 @@ class ChatAgent:
             # ===== 路由到对应的子 Agent（流式） =====
             if phase == "optimizing":
                 print(f"[Orchestrator] 路由 → OptimizeAgent（流式）")
+                # 绑定当前会话的 tool_executor
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 stream = self.optimize_agent.optimize(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
@@ -722,6 +753,7 @@ class ChatAgent:
             else:
                 # 兜底
                 print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}，流式）")
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 stream = self.optimize_agent.optimize(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],

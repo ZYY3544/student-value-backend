@@ -26,3 +26,6 @@ psycopg2-binary>=2.9.0
 
 # Word文档解析（简历文件支持）
 python-docx>=1.0.0
+
+# 网页搜索（Function Call 工具调用）
+duckduckgo-search>=7.0.0

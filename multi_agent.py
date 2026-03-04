@@ -20,6 +20,69 @@ from openai import OpenAI
 
 
 # ===========================================
+# OptimizeAgent 工具定义（OpenAI Function Calling 格式）
+# ===========================================
+
+OPTIMIZE_AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_jobs",
+            "description": "搜索招聘网站上的岗位信息。当用户想了解市场上有哪些相关岗位、想看看目标岗位的招聘要求时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词，通常是岗位名称，如'产品经理'、'数据分析'"
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "目标城市，如'上海'、'北京'、'深圳'，默认'全国'"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "re_evaluate_resume",
+            "description": "用 HAY 评估体系重新评估优化后的简历，生成新的职级、薪酬、能力评分，并与原始评估做对比。当用户想看看优化后简历的评估变化时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "optimized_resume_text": {
+                        "type": "string",
+                        "description": "优化后的完整简历文本"
+                    }
+                },
+                "required": ["optimized_resume_text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_with_jd",
+            "description": "将用户的简历与指定的 JD（岗位描述）进行匹配度分析，找出优势和差距。当用户提供了一个 JD 并想知道自己简历与之匹配程度时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jd_text": {
+                        "type": "string",
+                        "description": "JD（岗位描述）的完整文本"
+                    }
+                },
+                "required": ["jd_text"]
+            }
+        }
+    }
+]
+
+
+# ===========================================
 # 诊断 Agent（开场阶段专用）
 # ===========================================
 
@@ -261,6 +324,13 @@ class OptimizeAgent:
 - 保持对话感，语气鼓励为主
 - 改完一个点后，询问用户是否满意，要不要继续改其他部分
 
+【工具能力】
+你拥有以下工具，可以在对话中主动调用：
+- search_jobs：搜索招聘网站上的岗位信息。当用户想了解市场岗位、招聘要求时使用。
+- re_evaluate_resume：用 HAY 体系重新评估优化后的简历，生成新评分并与原始评估对比。当用户想看优化效果时使用。
+- compare_with_jd：将简历与用户提供的 JD 做匹配度分析。当用户粘贴 JD 想看匹配度时使用。
+请在合适的时机主动使用工具，将工具返回的数据融入你的回答中，用自然语言向用户呈现。
+
 【重要】
 - 你给出的改写必须基于简历中已有的信息进行润色和重组
 - 如果需要用户补充信息（比如具体数字、项目成果），要主动追问
@@ -268,9 +338,65 @@ class OptimizeAgent:
 
     TEMPERATURE = 0.5
 
-    def __init__(self, client: OpenAI, model: str):
+    # 工具调用最大循环次数（防止无限调用）
+    MAX_TOOL_ROUNDS = 3
+
+    def __init__(self, client: OpenAI, model: str, tool_executor=None):
         self.client = client
         self.model = model
+        self.tool_executor = tool_executor
+
+    def _execute_tool_calls(self, tool_calls, messages: list) -> list:
+        """
+        执行工具调用并将结果追加到消息列表
+
+        Args:
+            tool_calls: LLM 返回的 tool_calls 列表
+            messages: 当前消息列表（会被修改）
+
+        Returns:
+            更新后的消息列表
+        """
+        if not self.tool_executor:
+            return messages
+
+        # 先追加 assistant 的 tool_calls 消息
+        assistant_msg = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                }
+                for tc in tool_calls
+            ]
+        }
+        messages.append(assistant_msg)
+
+        # 逐个执行工具并追加结果
+        for tc in tool_calls:
+            func_name = tc.function.name
+            try:
+                arguments = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+
+            print(f"[OptimizeAgent] 调用工具: {func_name}({arguments})")
+            result = self.tool_executor.execute(func_name, arguments)
+            print(f"[OptimizeAgent] 工具结果: {result[:200]}...")
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+        return messages
 
     def optimize(
         self,
@@ -282,15 +408,11 @@ class OptimizeAgent:
         memory_context: str = "",
     ) -> Generator[str, None, None]:
         """
-        流式生成优化建议
+        流式生成优化建议（支持 Function Call）
 
-        Args:
-            assessment_context: 评测结果
-            resume_text: 简历原文
-            user_message: 用户当前消息
-            conversation_summary: 压缩后的对话摘要
-            recent_messages: 最近几轮原始对话（保持上下文连贯）
-            memory_context: 结构化记忆文本
+        策略：先非流式调用检测是否触发工具，
+        如果触发则执行工具后再流式输出最终回答；
+        如果未触发则直接流式输出。
 
         Yields:
             逐块文本
@@ -301,6 +423,37 @@ class OptimizeAgent:
         )
 
         try:
+            has_tools = bool(self.tool_executor)
+            tools_param = OPTIMIZE_AGENT_TOOLS if has_tools else None
+
+            if has_tools:
+                # 阶段 1：非流式调用，检测是否触发工具
+                for round_idx in range(self.MAX_TOOL_ROUNDS):
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=self.TEMPERATURE,
+                        tools=tools_param,
+                    )
+
+                    choice = response.choices[0]
+
+                    if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+                        # 有工具调用 → 执行后继续循环
+                        print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用")
+                        messages = self._execute_tool_calls(choice.message.tool_calls, messages)
+                        continue
+                    else:
+                        # 无工具调用 → 直接输出本次结果的文本内容
+                        content = choice.message.content or ""
+                        if content:
+                            yield content
+                        return
+
+                # 超过最大轮次，做最后一次流式调用（不带 tools，强制文本输出）
+                print(f"[OptimizeAgent] 达到最大工具调用轮次，强制文本输出")
+
+            # 阶段 2（无工具 或 工具循环后）：流式输出
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -325,19 +478,41 @@ class OptimizeAgent:
         recent_messages: List[dict] = None,
         memory_context: str = "",
     ) -> str:
-        """非流式生成优化建议"""
+        """非流式生成优化建议（支持 Function Call）"""
         messages = self._build_messages(
             assessment_context, resume_text, user_message,
             conversation_summary, recent_messages or [], memory_context
         )
 
         try:
+            has_tools = bool(self.tool_executor)
+            tools_param = OPTIMIZE_AGENT_TOOLS if has_tools else None
+
+            for round_idx in range(self.MAX_TOOL_ROUNDS):
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.TEMPERATURE,
+                    tools=tools_param if has_tools else None,
+                )
+
+                choice = response.choices[0]
+
+                if has_tools and choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+                    print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用（sync）")
+                    messages = self._execute_tool_calls(choice.message.tool_calls, messages)
+                    continue
+                else:
+                    return (choice.message.content or "").strip()
+
+            # 超过最大轮次，最后一次不带 tools
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=self.TEMPERATURE,
             )
-            return response.choices[0].message.content.strip()
+            return (response.choices[0].message.content or "").strip()
+
         except Exception as e:
             print(f"[OptimizeAgent] 优化生成失败: {e}")
             return "抱歉，生成优化建议时遇到了问题，请再试一次。"

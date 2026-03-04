@@ -435,7 +435,9 @@ chat_agent = None
 try:
     chat_agent = ChatAgent(
         client=llm_service.client,
-        model='deepseek-chat'
+        model='deepseek-chat',
+        llm_service=llm_service,
+        convergence_engine=None,  # 在 convergence_engine 初始化后注入
     )
     print("✓ 简历优化Agent初始化成功")
 except Exception as e:
@@ -449,6 +451,10 @@ try:
         llm_service=llm_service_pk   # 收敛引擎使用 reasoner
     )
     print("✓ 增量收敛引擎初始化成功")
+    # 注入到 chat_agent（延迟注入，因为 chat_agent 先于 convergence_engine 初始化）
+    if chat_agent:
+        chat_agent.convergence_engine = convergence_engine
+        print("  → 已注入 chat_agent（Function Call 工具调用已启用）")
 except Exception as e:
     print(f"✗ 增量收敛引擎初始化失败: {e}")
 

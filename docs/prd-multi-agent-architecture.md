@@ -1,9 +1,29 @@
 # PRD：多 Agent 简历优化系统
 
-> 版本：v1.0
-> 日期：2026-03-04
-> 状态：已实现（基础架构）
+> 版本：v1.2
+> 日期：2026-03-05
+> 状态：已实现（基础架构 + Function Call 工具调用）
 > 关联文档：[产品规划](product-plan-resume-optimization.md) | [设计探讨](conversation-agent-design-deep-dive.md)
+
+---
+
+## 更新日志
+
+### v1.2 — Function Call 工具调用（2026-03-05）
+
+为 OptimizeAgent 增加 3 个 Function Call 工具，让 Agent 能主动与外部数据交互：
+
+| 工具 | 功能 | 依赖 |
+|---|---|---|
+| `search_jobs(keyword, city)` | 搜索招聘网站岗位信息 | duckduckgo-search |
+| `re_evaluate_resume(optimized_resume_text)` | HAY 体系重新评估优化后简历 | IncrementalConvergence |
+| `compare_with_jd(jd_text)` | LLM 对比简历与 JD 匹配度 | LLMService |
+
+**关键设计**：
+- 非流式检测 + 流式输出策略：先 non-stream 检测是否触发工具，执行后再 stream 最终回答
+- 工具结果以 `tool` role 消息注入对话，由 LLM 融合解读后输出自然语言
+- 最多 3 轮工具调用循环，防止无限调用
+- 新增 `tool_executor.py`，修改 `multi_agent.py`、`chat_agent.py`、`mini_api.py`
 
 ---
 
