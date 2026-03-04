@@ -96,26 +96,79 @@ class ToolExecutor:
         query = f"{keyword} {city} 校招 实习 招聘"
         print(f"[ToolExecutor] search_jobs: query={query}")
 
+        search_results = []
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.text(query, region="cn-zh", max_results=5))
+                raw = list(ddgs.text(query, region="cn-zh", max_results=5))
+            # 过滤明显不相关的结果（检查标题或摘要是否包含关键词的任意字符）
+            keyword_chars = set(keyword)
+            for r in raw:
+                title = r.get("title", "")
+                body = r.get("body", "")
+                # 标题或摘要中至少包含关键词 50% 以上的字符才算相关
+                match_count = sum(1 for c in keyword_chars if c in title or c in body)
+                if match_count >= len(keyword_chars) * 0.5:
+                    search_results.append({
+                        "title": title,
+                        "link": r.get("href", ""),
+                        "snippet": body,
+                    })
+        except Exception as e:
+            print(f"[ToolExecutor] 搜索引擎调用失败: {e}")
 
-            jobs = []
-            for r in results:
-                jobs.append({
-                    "title": r.get("title", ""),
-                    "link": r.get("href", ""),
-                    "snippet": r.get("body", ""),
-                })
-
+        # 如果搜索结果有效，直接返回
+        if search_results:
             return json.dumps(
-                {"keyword": keyword, "city": city, "results": jobs},
+                {"keyword": keyword, "city": city, "source": "web_search", "results": search_results[:5]},
                 ensure_ascii=False,
             )
-        except Exception as e:
-            print(f"[ToolExecutor] 搜索失败: {e}")
+
+        # 兜底：用 LLM 基于知识生成岗位信息
+        print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
+        return self._llm_search_fallback(keyword, city)
+
+    def _llm_search_fallback(self, keyword: str, city: str) -> str:
+        """当搜索引擎结果不可用时，用 LLM 生成岗位市场信息"""
+        if not self.llm_service:
             return json.dumps(
-                {"error": f"搜索失败: {str(e)}", "keyword": keyword, "city": city},
+                {"keyword": keyword, "city": city, "source": "unavailable",
+                 "results": [], "note": "搜索暂不可用"},
+                ensure_ascii=False,
+            )
+
+        prompt = f"""请根据你的知识，列出当前{city}{keyword}相关的校招/实习岗位市场信息。
+
+输出严格 JSON 格式：
+{{
+    "results": [
+        {{"company": "公司名", "title": "岗位名", "requirements": "核心要求（1句话）", "salary_range": "薪资范围"}},
+        ...
+    ],
+    "market_insight": "1-2句话概括该岗位在该城市的市场情况"
+}}
+
+要求：列出 3-5 个典型岗位，信息要基于真实市场情况，不要编造不存在的公司。"""
+
+        try:
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
+                messages=[
+                    {"role": "system", "content": "你是一位熟悉中国互联网招聘市场的顾问。输出纯 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.5,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(response.choices[0].message.content.strip())
+            result["keyword"] = keyword
+            result["city"] = city
+            result["source"] = "llm_knowledge"
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            print(f"[ToolExecutor] LLM 兜底搜索失败: {e}")
+            return json.dumps(
+                {"keyword": keyword, "city": city, "source": "error",
+                 "error": f"搜索失败: {str(e)}"},
                 ensure_ascii=False,
             )
 
