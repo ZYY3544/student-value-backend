@@ -918,6 +918,9 @@ def assess():
                 # 学生版附加信息
                 'schoolTier': school_tier,
 
+                # 解析后的简历文本（供聊天 Agent 使用）
+                'resumeText': resume_text,
+
                 # 调试信息（可选，生产环境可移除）
                 'factors': factors,
                 'logId': log_id,
