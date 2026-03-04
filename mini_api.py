@@ -771,25 +771,8 @@ def assess():
         print("[步骤5] 生成趣味标签...")
         level_tag, level_desc = get_level_tag_and_desc(job_grade, factors, abilities, total_score=total_score)
 
-        # 7. 生成 AI 深度评估
+        # 7. AI 深度评估已移除（功能由聊天 Agent 承接）
         is_insufficient = bool(convergence_result and convergence_result.get('insufficient_input'))
-        print(f"[步骤6] 生成 AI 深度评估...{'（信息不足-赛道分析模式）' if is_insufficient else ''}")
-        deep_insight, resume_health_score = llm_service.generate_deep_insight(
-            assessment_type=assessment_type,
-            city=city,
-            job_title=job_title,
-            level=job_grade,
-            level_tag=level_tag,
-            salary_range=salary_range,
-            abilities=abilities,
-            original_text=eval_text,
-            insufficient=is_insufficient,
-            industry=industry,
-            job_function=job_function
-        )
-        if not deep_insight:
-            # 降级：使用诚实的默认文案
-            deep_insight = "很抱歉，系统未能生成有效的深度评估分析。这可能是因为提供的信息不够充分，建议您补充更详细的真实职业经历后重新评估。"
 
         # 计算薪酬竞争力百分位
         salary_competitiveness = calculate_salary_competitiveness(job_function, job_grade)
@@ -875,7 +858,7 @@ def assess():
                 'NI(影响性质)': factors['nature_of_impact'],
             },
             'abilities': f"专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}",
-            'deep_insight': deep_insight,
+            'deep_insight': None,
             'elapsed': f"{elapsed_time:.2f}",
             'invite_code': invite_code or None,
             'welcome_s': welcome_s,
@@ -917,9 +900,7 @@ def assess():
                 'abilities': abilities,
                 'radarData': radar_data,
                 'abilitySummary': ability_summary,
-                'deepInsight': deep_insight,  # AI 深度评估
                 'salaryCompetitiveness': salary_competitiveness,  # 薪酬竞争力百分位 0-100
-                'resumeHealthScore': resume_health_score,          # 简历健康度 1-100
 
                 # 学生版附加信息
                 'schoolTier': school_tier,
