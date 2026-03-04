@@ -8,10 +8,11 @@
 默认端口: 5001
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from config import config
 from llm_service import LLMService
+from chat_agent import ChatAgent
 from incremental_convergence import IncrementalConvergence
 from validation_rules import validation_rules
 from salary_calculator import SalaryCalculator
@@ -428,6 +429,17 @@ try:
 except Exception as e:
     print(f"✗ LLM服务初始化失败: {e}")
     exit(1)
+
+# 简历优化 Agent
+chat_agent = None
+try:
+    chat_agent = ChatAgent(
+        client=llm_service.client,
+        model='deepseek-chat'
+    )
+    print("✓ 简历优化Agent初始化成功")
+except Exception as e:
+    print(f"✗ 简历优化Agent初始化失败: {e}")
 
 # 增量收敛引擎
 convergence_engine = None
@@ -1015,6 +1027,199 @@ def update_duration():
     except Exception as e:
         print(f"[页面停留] ❌ 更新失败: {e}")
     return jsonify({'success': True}), 200
+
+
+# ===========================================
+# 简历优化 Agent API
+# ===========================================
+
+@app.route('/api/chat/start', methods=['POST'])
+def chat_start():
+    """
+    开启简历优化对话
+
+    请求体:
+    {
+        "assessmentContext": {
+            "factors": {...},         // HAY 8因素
+            "abilities": {...},       // 5维能力
+            "grade": 12,
+            "salaryRange": "8.5k~12k",
+            "jobTitle": "产品经理",
+            "jobFunction": "产品管理",
+            "deepInsight": "..."
+        },
+        "resumeText": "简历原文..."
+    }
+
+    响应:
+    {
+        "success": true,
+        "data": {
+            "sessionId": "uuid",
+            "greeting": "你好！我看了你的评测结果..."
+        }
+    }
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        assessment_context = data.get('assessmentContext', {})
+        resume_text_raw = data.get('resumeText', '')
+
+        if not assessment_context:
+            return jsonify({'success': False, 'error': '缺少评测上下文'}), 400
+
+        if not resume_text_raw:
+            return jsonify({'success': False, 'error': '缺少简历内容'}), 400
+
+        # 解析简历（复用现有的文件解析逻辑）
+        resume_text = extract_resume_text(resume_text_raw)
+        if not resume_text:
+            return jsonify({'success': False, 'error': '简历内容解析失败'}), 400
+
+        # 创建会话并生成开场白
+        result = chat_agent.start_session(
+            assessment_context=assessment_context,
+            resume_text=resume_text
+        )
+
+        print(f"[Agent API] 会话已创建: {result['session_id'][:8]}...")
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'sessionId': result['session_id'],
+                'greeting': result['greeting']
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"[Agent API] /chat/start 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat/message', methods=['POST'])
+def chat_message():
+    """
+    发送消息（支持普通模式和流式模式）
+
+    请求体:
+    {
+        "sessionId": "uuid",
+        "message": "帮我改一下实习经历那段",
+        "stream": true   // 可选，默认 false
+    }
+
+    普通模式响应:
+    {
+        "success": true,
+        "data": {
+            "reply": "好的，我来看看你的实习经历..."
+        }
+    }
+
+    流式模式响应: SSE (text/event-stream)
+        data: {"type": "text", "content": "好的"}
+        data: {"type": "text", "content": "，我来"}
+        ...
+        data: {"type": "done"}
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId', '')
+        message = data.get('message', '').strip()
+        use_stream = data.get('stream', False)
+
+        if not session_id:
+            return jsonify({'success': False, 'error': '缺少 sessionId'}), 400
+        if not message:
+            return jsonify({'success': False, 'error': '消息不能为空'}), 400
+
+        # 验证会话存在
+        session = chat_agent.session_manager.get_session(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+        if use_stream:
+            # 流式模式：SSE
+            def generate():
+                try:
+                    for chunk in chat_agent.chat_stream(session_id, message):
+                        yield f"data: {json.dumps({'type': 'text', 'content': chunk}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                except Exception as e:
+                    print(f"[Agent API] 流式输出错误: {e}")
+                    yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+
+            return Response(
+                generate(),
+                mimetype='text/event-stream',
+                headers={
+                    'Cache-Control': 'no-cache',
+                    'X-Accel-Buffering': 'no',
+                    'Connection': 'keep-alive',
+                }
+            )
+        else:
+            # 普通模式
+            reply = chat_agent.chat(session_id, message)
+            if reply is None:
+                return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+            return jsonify({
+                'success': True,
+                'data': {'reply': reply}
+            }), 200
+
+    except Exception as e:
+        print(f"[Agent API] /chat/message 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat/history', methods=['GET'])
+def chat_history():
+    """
+    获取对话历史
+
+    参数: ?sessionId=uuid
+
+    响应:
+    {
+        "success": true,
+        "data": {
+            "messages": [
+                {"role": "user", "content": "..."},
+                {"role": "assistant", "content": "..."},
+                ...
+            ]
+        }
+    }
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    session_id = request.args.get('sessionId', '')
+    if not session_id:
+        return jsonify({'success': False, 'error': '缺少 sessionId'}), 400
+
+    history = chat_agent.get_history(session_id)
+    if history is None:
+        return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+    return jsonify({
+        'success': True,
+        'data': {'messages': history}
+    }), 200
 
 
 # ===========================================
