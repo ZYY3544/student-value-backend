@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简历优化助手</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --primary: #4F46E5;
+    --primary-light: #818CF8;
+    --bg: #F9FAFB;
+    --card-bg: #FFFFFF;
+    --text: #1F2937;
+    --text-secondary: #6B7280;
+    --border: #E5E7EB;
+    --user-bubble: #4F46E5;
+    --bot-bubble: #F3F4F6;
+    --radius: 12px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .header-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 20px;
+  }
+  .header-text h1 { font-size: 16px; font-weight: 600; }
+  .header-text p { font-size: 12px; color: var(--text-secondary); }
+  .header-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #10B981;
+  }
+  .status-dot.offline { background: #EF4444; }
+  .status-dot.loading { background: #F59E0B; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Chat area */
+  .chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .message {
+    display: flex;
+    gap: 10px;
+    max-width: 85%;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .message.user { align-self: flex-end; flex-direction: row-reverse; }
+  .message.bot { align-self: flex-start; }
+
+  .avatar {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .message.bot .avatar {
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    color: white;
+  }
+  .message.user .avatar {
+    background: #E5E7EB;
+    color: #6B7280;
+  }
+
+  .bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    line-height: 1.6;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .message.user .bubble {
+    background: var(--user-bubble);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .message.bot .bubble {
+    background: var(--bot-bubble);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+  .message.bot .bubble strong { color: var(--primary); }
+
+  /* Typing indicator */
+  .typing-indicator {
+    display: flex; gap: 4px; padding: 8px 0;
+  }
+  .typing-indicator span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-secondary);
+    animation: typing 1.2s infinite;
+  }
+  .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typing { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+
+  /* Input area */
+  .input-area {
+    background: var(--card-bg);
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    flex-shrink: 0;
+  }
+  .input-wrapper {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .input-wrapper textarea {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+    min-height: 42px;
+    max-height: 120px;
+    line-height: 1.5;
+    transition: border-color 0.2s;
+  }
+  .input-wrapper textarea:focus { border-color: var(--primary); }
+  .input-wrapper textarea:disabled { background: #F9FAFB; color: #9CA3AF; }
+
+  .send-btn {
+    width: 42px; height: 42px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--primary);
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.2s, transform 0.1s;
+    flex-shrink: 0;
+  }
+  .send-btn:hover { background: #4338CA; }
+  .send-btn:active { transform: scale(0.95); }
+  .send-btn:disabled { background: #D1D5DB; cursor: not-allowed; }
+
+  .input-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    text-align: center;
+  }
+
+  /* Init panel (shown before chat starts) */
+  .init-panel {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .init-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    padding: 32px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .init-card h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+  }
+  .init-card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    line-height: 1.6;
+  }
+  .init-card label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  .init-card textarea, .init-card input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    margin-bottom: 14px;
+    transition: border-color 0.2s;
+  }
+  .init-card textarea:focus, .init-card input:focus { border-color: var(--primary); }
+  .init-card textarea { min-height: 120px; resize: vertical; }
+
+  .init-card .row {
+    display: flex; gap: 12px;
+  }
+  .init-card .row > div { flex: 1; }
+
+  .start-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    margin-top: 6px;
+  }
+  .start-btn:hover { background: #4338CA; }
+  .start-btn:disabled { background: #D1D5DB; cursor: not-allowed; }
+
+  .demo-btn {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    color: var(--primary);
+    border: 1px dashed var(--primary);
+    border-radius: var(--radius);
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: background 0.2s;
+  }
+  .demo-btn:hover { background: #EEF2FF; }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .chat-container { padding: 12px 16px; }
+    .message { max-width: 92%; }
+    .input-area { padding: 12px 16px; }
+    .init-card { padding: 24px 20px; }
+    .init-card .row { flex-direction: column; gap: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-icon">AI</div>
+  <div class="header-text">
+    <h1>简历优化助手</h1>
+    <p>基于 HAY 评估体系的智能简历优化</p>
+  </div>
+  <div class="header-status">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">就绪</span>
+  </div>
+</div>
+
+<!-- Init Panel (before chat starts) -->
+<div class="init-panel" id="initPanel">
+  <div class="init-card">
+    <h2>开始简历优化</h2>
+    <p>请粘贴你的简历内容和评测结果，AI 助手将根据 HAY 评估体系帮你逐段优化简历。</p>
+
+    <label>简历内容 *</label>
+    <textarea id="resumeInput" placeholder="粘贴你的简历内容..."></textarea>
+
+    <div class="row">
+      <div>
+        <label>目标岗位 *</label>
+        <input type="text" id="jobTitleInput" placeholder="如: 产品经理">
+      </div>
+      <div>
+        <label>所属职能</label>
+        <input type="text" id="jobFunctionInput" placeholder="如: 产品管理" value="通用职能">
+      </div>
+    </div>
+
+    <button class="start-btn" id="startBtn" onclick="startChat()">开始优化对话</button>
+    <button class="demo-btn" onclick="fillDemo()">填入示例数据试试</button>
+  </div>
+</div>
+
+<!-- Chat Area (hidden initially) -->
+<div class="chat-container" id="chatContainer" style="display:none;"></div>
+
+<!-- Input Area (hidden initially) -->
+<div class="input-area" id="inputArea" style="display:none;">
+  <div class="input-wrapper">
+    <textarea id="messageInput" placeholder="输入你的问题..." rows="1"
+      onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">&#10148;</button>
+  </div>
+  <div class="input-hint">Enter 发送 / Shift+Enter 换行</div>
+</div>
+
+<script>
+// ===========================================
+// State
+// ===========================================
+
+let sessionId = null;
+let isStreaming = false;
+
+const API_BASE = window.location.origin;
+
+// ===========================================
+// Demo data
+// ===========================================
+
+function fillDemo() {
+  document.getElementById('resumeInput').value = `教育经历
+清华大学 计算机科学与技术 硕士 2024-2026
+北京邮电大学 软件工程 本科 2020-2024  GPA 3.7/4.0
+
+实习经历
+字节跳动 产品经理实习生 2025.06-2025.09
+- 负责抖音电商某模块的需求分析和产品设计
+- 主导了商品详情页的改版，上线后转化率提升12%
+- 输出PRD文档20+篇，与研发团队协作推进需求落地
+
+腾讯 产品策划实习生 2024.07-2024.10
+- 参与微信读书推荐算法优化项目
+- 负责竞品分析和用户调研，输出调研报告5篇
+- 协助产品经理完成需求评审和项目跟进
+
+项目经历
+校园二手交易平台 项目负责人 2024.03-2024.06
+- 从0到1搭建校内二手交易平台，覆盖3000+用户
+- 负责产品规划、原型设计和项目管理
+
+技能
+熟练使用 Axure、Figma、SQL
+了解 Python 数据分析`;
+
+  document.getElementById('jobTitleInput').value = '产品经理';
+  document.getElementById('jobFunctionInput').value = '产品管理';
+}
+
+// ===========================================
+// Start chat
+// ===========================================
+
+async function startChat() {
+  const resumeText = document.getElementById('resumeInput').value.trim();
+  const jobTitle = document.getElementById('jobTitleInput').value.trim();
+  const jobFunction = document.getElementById('jobFunctionInput').value.trim() || '通用职能';
+
+  if (!resumeText) { alert('请填写简历内容'); return; }
+  if (!jobTitle) { alert('请填写目标岗位'); return; }
+
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = '正在分析简历...';
+  setStatus('loading', '正在初始化...');
+
+  try {
+    // Build a minimal assessment context
+    // In production, this would come from the actual assessment result
+    const assessmentContext = {
+      jobTitle: jobTitle,
+      jobFunction: jobFunction,
+      factors: {},
+      abilities: {},
+      grade: null,
+      salaryRange: '待评估'
+    };
+
+    const res = await fetch(`${API_BASE}/api/chat/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        assessmentContext: assessmentContext,
+        resumeText: resumeText
+      })
+    });
+
+    const data = await res.json();
+
+    if (!data.success) {
+      throw new Error(data.error || '启动失败');
+    }
+
+    sessionId = data.data.sessionId;
+
+    // Switch to chat view
+    document.getElementById('initPanel').style.display = 'none';
+    document.getElementById('chatContainer').style.display = 'flex';
+    document.getElementById('inputArea').style.display = 'block';
+
+    // Show greeting
+    appendMessage('bot', data.data.greeting);
+    setStatus('online', '对话中');
+
+    // Focus input
+    document.getElementById('messageInput').focus();
+
+  } catch (err) {
+    console.error('Start failed:', err);
+    alert('启动失败: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '开始优化对话';
+    setStatus('offline', '连接失败');
+  }
+}
+
+// ===========================================
+// Send message
+// ===========================================
+
+async function sendMessage() {
+  const input = document.getElementById('messageInput');
+  const message = input.value.trim();
+  if (!message || isStreaming || !sessionId) return;
+
+  // Show user message
+  appendMessage('user', message);
+  input.value = '';
+  autoResize(input);
+
+  // Disable input while streaming
+  isStreaming = true;
+  document.getElementById('sendBtn').disabled = true;
+  input.disabled = true;
+  setStatus('loading', '正在思考...');
+
+  // Show typing indicator
+  const typingEl = appendTyping();
+
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: sessionId,
+        message: message,
+        stream: true
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+
+    // Remove typing indicator, add bot bubble
+    typingEl.remove();
+    const bubbleEl = appendMessage('bot', '');
+    const contentEl = bubbleEl.querySelector('.bubble');
+
+    // Read SSE stream
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6);
+        try {
+          const event = JSON.parse(jsonStr);
+          if (event.type === 'text') {
+            fullText += event.content;
+            contentEl.innerHTML = formatText(fullText);
+            scrollToBottom();
+          } else if (event.type === 'done') {
+            // Done
+          } else if (event.type === 'error') {
+            fullText += '\n[错误: ' + event.content + ']';
+            contentEl.innerHTML = formatText(fullText);
+          }
+        } catch (e) {
+          // Skip invalid JSON
+        }
+      }
+    }
+
+  } catch (err) {
+    console.error('Message failed:', err);
+    typingEl.remove();
+    appendMessage('bot', '抱歉，发送消息失败: ' + err.message + '。请重试。');
+  } finally {
+    isStreaming = false;
+    document.getElementById('sendBtn').disabled = false;
+    input.disabled = false;
+    input.focus();
+    setStatus('online', '对话中');
+  }
+}
+
+// ===========================================
+// UI Helpers
+// ===========================================
+
+function appendMessage(role, text) {
+  const container = document.getElementById('chatContainer');
+  const msgEl = document.createElement('div');
+  msgEl.className = `message ${role}`;
+
+  const avatarText = role === 'bot' ? 'AI' : 'Me';
+  msgEl.innerHTML = `
+    <div class="avatar">${avatarText}</div>
+    <div class="bubble">${formatText(text)}</div>
+  `;
+
+  container.appendChild(msgEl);
+  scrollToBottom();
+  return msgEl;
+}
+
+function appendTyping() {
+  const container = document.getElementById('chatContainer');
+  const msgEl = document.createElement('div');
+  msgEl.className = 'message bot';
+  msgEl.innerHTML = `
+    <div class="avatar">AI</div>
+    <div class="bubble">
+      <div class="typing-indicator">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  `;
+  container.appendChild(msgEl);
+  scrollToBottom();
+  return msgEl;
+}
+
+function formatText(text) {
+  if (!text) return '';
+  // Escape HTML
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  // Bold: **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  return html;
+}
+
+function scrollToBottom() {
+  const container = document.getElementById('chatContainer');
+  container.scrollTop = container.scrollHeight;
+}
+
+function setStatus(state, text) {
+  const dot = document.getElementById('statusDot');
+  const label = document.getElementById('statusText');
+  dot.className = 'status-dot' + (state === 'offline' ? ' offline' : state === 'loading' ? ' loading' : '');
+  label.textContent = text;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+// ===========================================
+// Init
+// ===========================================
+
+// Check connection on load
+(async function() {
+  try {
+    const res = await fetch(`${API_BASE}/api/health`);
+    const data = await res.json();
+    if (data.status === 'ok') {
+      setStatus('online', '就绪');
+    } else {
+      setStatus('offline', '服务异常');
+    }
+  } catch (e) {
+    setStatus('offline', '无法连接');
+  }
+})();
+</script>
+</body>
+</html>

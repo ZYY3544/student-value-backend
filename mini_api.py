@@ -8,7 +8,7 @@
 默认端口: 5001
 """
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 from config import config
 from llm_service import LLMService
@@ -404,7 +404,7 @@ print(f"[邀请码] 一次性剩余可用: {INVITE_CODES_ALL - USED_INVITE_CODES
 # 初始化 Flask
 # ===========================================
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config['JSON_AS_ASCII'] = False
 CORS(app, origins='*')
 
@@ -495,8 +495,15 @@ def health_check():
         'service': 'student-value-backend',
         'llm': llm_service is not None,
         'convergence': convergence_engine is not None,
-        'salary': salary_calculator is not None
+        'salary': salary_calculator is not None,
+        'chat_agent': chat_agent is not None
     }), 200
+
+
+@app.route('/chat')
+def chat_page():
+    """简历优化助手聊天页面"""
+    return send_from_directory('static', 'chat.html')
 
 
 ADMIN_LOG_KEY = os.getenv('ADMIN_LOG_KEY', '')
