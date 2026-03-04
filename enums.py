@@ -225,6 +225,9 @@ class NatureOfImpactNonQuantified(str, Enum):
     V_MINUS = "V-"
     V = "V"
     V_PLUS = "V+"
+    VI_MINUS = "VI-"
+    VI = "VI"
+    VI_PLUS = "VI+"
 
 
 # ===========================================
