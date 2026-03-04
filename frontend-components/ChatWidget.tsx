@@ -42,8 +42,74 @@ interface ChatWidgetProps {
 }
 
 // ===========================================
+// Markdown 渲染
+// ===========================================
+
+/**
+ * 简易 markdown 渲染：支持 **加粗**、换行、有序/无序列表
+ * 不引入第三方库，保持轻量
+ */
+const formatContent = (text: string) => {
+  // 按换行分段
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+
+  lines.forEach((line, lineIdx) => {
+    // 空行 → 换行
+    if (!line.trim()) {
+      elements.push(<br key={`br-${lineIdx}`} />);
+      return;
+    }
+
+    // 无序列表（- xxx 或 * xxx）
+    const ulMatch = line.match(/^[\s]*[-*]\s+(.+)/);
+    // 有序列表（1. xxx）
+    const olMatch = line.match(/^[\s]*(\d+)[.)]\s+(.+)/);
+
+    let content: string;
+    let prefix: React.ReactNode = null;
+
+    if (ulMatch) {
+      content = ulMatch[1];
+      prefix = <span className="text-[#0A66C2] mr-1.5">•</span>;
+    } else if (olMatch) {
+      content = olMatch[2];
+      prefix = <span className="text-[#0A66C2] mr-1.5 font-bold">{olMatch[1]}.</span>;
+    } else {
+      content = line;
+    }
+
+    // 处理 **加粗**
+    const parts = content.split(/(\*\*[^*]+\*\*)/);
+    const rendered = parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return (
+          <span key={i} className="font-bold text-[#0A66C2]">
+            {part.slice(2, -2)}
+          </span>
+        );
+      }
+      return part;
+    });
+
+    elements.push(
+      <span key={`line-${lineIdx}`} className={prefix ? 'flex items-start pl-1' : undefined}>
+        {prefix}
+        <span>{rendered}</span>
+      </span>
+    );
+
+    // 行与行之间不加额外 br（whitespace-pre-wrap 会处理）
+  });
+
+  return elements;
+};
+
+// ===========================================
 // Component
 // ===========================================
+
+const MAX_INPUT_LENGTH = 2000;
 
 export const ChatWidget: React.FC<ChatWidgetProps> = ({
   assessmentContext,
@@ -118,9 +184,36 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     }
   }, [sessionId, initSession]);
 
+  // 会话过期恢复：重新初始化并提示用户
+  const recoverSession = useCallback(async () => {
+    setSessionId(null);
+    setMessages([]);
+    setError(null);
+    setIsInitializing(true);
+
+    try {
+      const res = await fetch(`${apiBase}/api/chat/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assessmentContext, resumeText }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Recovery failed');
+
+      setSessionId(data.data.sessionId);
+      setMessages([
+        { role: 'assistant', content: '⚠️ 之前的会话已过期，已为你重新开启对话。\n\n' + data.data.greeting },
+      ]);
+    } catch (err: any) {
+      setError(err.message || 'Failed to recover');
+    } finally {
+      setIsInitializing(false);
+    }
+  }, [apiBase, assessmentContext, resumeText]);
+
   // Send message with SSE streaming
   const sendMessage = useCallback(async () => {
-    const text = inputValue.trim();
+    const text = inputValue.trim().slice(0, MAX_INPUT_LENGTH);
     if (!text || isLoading || !sessionId) return;
 
     // Add user message
@@ -141,6 +234,15 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
           stream: true,
         }),
       });
+
+      // 会话过期检测 → 自动恢复
+      if (res.status === 404) {
+        // 移除空的 assistant 占位消息和刚发的 user 消息
+        setMessages(prev => prev.slice(0, -2));
+        setIsLoading(false);
+        await recoverSession();
+        return;
+      }
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -186,14 +288,14 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         const updated = [...prev];
         updated[updated.length - 1] = {
           role: 'assistant',
-          content: 'Sorry, failed to get response. Please try again.',
+          content: '抱歉，获取回复失败，请重试。',
         };
         return updated;
       });
     } finally {
       setIsLoading(false);
     }
-  }, [apiBase, inputValue, isLoading, sessionId]);
+  }, [apiBase, inputValue, isLoading, sessionId, recoverSession]);
 
   // Handle keyboard
   const handleKeyDown = useCallback(
@@ -205,21 +307,6 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     },
     [sendMessage]
   );
-
-  // Format text with **bold**
-  const formatContent = (text: string) => {
-    const parts = text.split(/(\*\*[^*]+\*\*)/);
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return (
-          <span key={i} className="font-bold text-[#0A66C2]">
-            {part.slice(2, -2)}
-          </span>
-        );
-      }
-      return part;
-    });
-  };
 
   return (
     <>
@@ -320,7 +407,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
             <textarea
               ref={inputRef}
               value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
+              onChange={e => setInputValue(e.target.value.slice(0, MAX_INPUT_LENGTH))}
               onKeyDown={handleKeyDown}
               placeholder="输入你的问题..."
               rows={1}

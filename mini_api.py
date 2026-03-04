@@ -1153,6 +1153,12 @@ def chat_message():
         if not message:
             return jsonify({'success': False, 'error': '消息不能为空'}), 400
 
+        # 消息长度限制（防止 token 超限）
+        MAX_MESSAGE_LEN = 2000
+        if len(message) > MAX_MESSAGE_LEN:
+            message = message[:MAX_MESSAGE_LEN]
+            print(f"[Agent API] 用户消息过长，已截断至 {MAX_MESSAGE_LEN} 字符")
+
         # 验证会话存在
         session = chat_agent.session_manager.get_session(session_id)
         if not session:

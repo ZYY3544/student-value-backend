@@ -405,8 +405,11 @@ class ChatAgent:
         history = agent.get_history(session_id)
     """
 
-    # 触发总结阶段的关键词
-    SUMMARY_KEYWORDS = ["总结", "结束", "就这些", "谢谢", "没了", "差不多了"]
+    # 触发总结阶段的关键词（仅当消息以这些词为主要意图时才触发）
+    SUMMARY_KEYWORDS = ["总结", "结束", "就这些", "没了", "差不多了", "先这样", "可以了", "到此为止", "OK了", "好了就这些"]
+
+    # 表示还想继续优化的信号词（优先级高于总结关键词）
+    CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
     def __init__(self, client: OpenAI, model: str = "deepseek-chat"):
         self.client = client
@@ -445,16 +448,17 @@ class ChatAgent:
             resume_text=resume_text
         )
 
-        # 后台拆分简历（不阻塞开场）
-        session = self.session_manager.get_session(session_id)
-        if session:
+        # 后台线程拆分简历（真正不阻塞开场）
+        def _bg_split():
             try:
                 sections = split_resume_sections(self.client, self.model, resume_text)
                 self.session_manager.update_session(session_id, {
                     "resume_sections": sections
                 })
             except Exception as e:
-                print(f"[Orchestrator] 简历拆分失败（非阻塞）: {e}")
+                print(f"[Orchestrator] 简历拆分失败（后台）: {e}")
+
+        threading.Thread(target=_bg_split, daemon=True).start()
 
         # ===== 调用 DiagnosisAgent 生成开场白 =====
         print(f"[Orchestrator] 路由 → DiagnosisAgent（开场诊断）")
@@ -510,45 +514,68 @@ class ChatAgent:
         """
         检测阶段转换
 
-        规则简单明确，协调者不需要 LLM 来判断——关键词匹配即可。
+        规则：
+        1. optimizing → summary：命中总结关键词且不含继续优化信号
+        2. summary → optimizing：用户在总结后又想继续优化（回退）
+        3. 短消息优先（"谢谢帮我继续改" 含两类关键词时，继续信号优先）
         """
+        msg = user_message.strip()
+
+        # 检测是否有继续优化的意图
+        has_continue = any(kw in msg for kw in self.CONTINUE_KEYWORDS)
+        has_summary = any(kw in msg for kw in self.SUMMARY_KEYWORDS)
+
         if current_phase == "optimizing":
-            if any(kw in user_message for kw in self.SUMMARY_KEYWORDS):
+            # 有总结意图且没有继续意图 → 进入总结
+            if has_summary and not has_continue:
+                # 额外检查：消息太长（>30字）可能只是聊天中偶然提到关键词
+                if len(msg) > 30 and not msg.endswith(("吧", "了", "。")):
+                    return current_phase
                 return "summary"
+
+        elif current_phase == "summary":
+            # 总结阶段后用户想继续优化 → 回退
+            if has_continue:
+                print(f"[Orchestrator] 用户在总结后继续优化，回退到 optimizing")
+                return "optimizing"
+
         return current_phase
 
     def _post_chat_processing(self, session_id: str):
         """
-        每轮对话后的后处理
+        每轮对话后的后处理（后台线程执行，不阻塞用户）
 
         1. 提取结构化记忆（供下一轮子 Agent 使用）
         2. 判断是否需要压缩对话历史
         """
-        session = self.session_manager.get_session(session_id)
-        if not session:
-            return
+        def _bg_process():
+            session = self.session_manager.get_session(session_id)
+            if not session:
+                return
 
-        # 1. 提取结构化记忆
-        try:
-            HistoryCompressor.extract_memory(self.client, self.model, session)
-        except Exception as e:
-            print(f"[Orchestrator] 记忆提取失败: {e}")
-
-        # 2. 判断是否需要压缩
-        if HistoryCompressor.should_compress(session):
+            # 1. 提取结构化记忆
             try:
-                compressed = HistoryCompressor.compress_history(
-                    self.client, self.model, session
-                )
-                keep_recent = HistoryCompressor.KEEP_RECENT
-                recent_messages = session["messages"][-keep_recent:]
-                self.session_manager.update_session(session_id, {
-                    "compressed_history": compressed,
-                    "messages": recent_messages,
-                })
-                print(f"[Orchestrator] 会话 {session_id[:8]} 历史已压缩，保留最近 {len(recent_messages)} 条消息")
+                HistoryCompressor.extract_memory(self.client, self.model, session)
             except Exception as e:
-                print(f"[Orchestrator] 历史压缩失败: {e}")
+                print(f"[Orchestrator] 记忆提取失败: {e}")
+
+            # 2. 判断是否需要压缩
+            if HistoryCompressor.should_compress(session):
+                try:
+                    compressed = HistoryCompressor.compress_history(
+                        self.client, self.model, session
+                    )
+                    keep_recent = HistoryCompressor.KEEP_RECENT
+                    recent_messages = session["messages"][-keep_recent:]
+                    self.session_manager.update_session(session_id, {
+                        "compressed_history": compressed,
+                        "messages": recent_messages,
+                    })
+                    print(f"[Orchestrator] 会话 {session_id[:8]} 历史已压缩，保留最近 {len(recent_messages)} 条消息")
+                except Exception as e:
+                    print(f"[Orchestrator] 历史压缩失败: {e}")
+
+        threading.Thread(target=_bg_process, daemon=True).start()
 
     def chat(self, session_id: str, user_message: str) -> Optional[str]:
         """

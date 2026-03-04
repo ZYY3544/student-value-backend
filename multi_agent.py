@@ -351,29 +351,43 @@ class OptimizeAgent:
         recent_messages: List[dict],
         memory_context: str,
     ) -> list:
-        """构建发送给 LLM 的消息列表"""
+        """
+        构建发送给 LLM 的消息列表
+
+        结构：
+        1. system prompt
+        2. 上下文注入（作为第一条 user message）
+        3. 历史对话（去掉当前这轮，因为当前消息单独传入）
+        4. 当前用户消息
+
+        注意：recent_messages 可能已包含当前用户消息（因为协调者先 add_message 再路由），
+        所以需要排除末尾与 user_message 相同的消息，避免重复。
+        """
         messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
 
-        # 构建上下文（作为第一条 user message 注入）
+        # 构建上下文
         context = self._build_context(ctx, resume_text, conversation_summary, memory_context)
 
-        # 添加最近的对话历史（保持连贯性）
-        # 但用上下文替换第一条 user message 的前缀
-        if recent_messages:
-            # 先注入上下文
-            messages.append({"role": "user", "content": context + "\n\n用户说：" + recent_messages[0].get("content", "")})
-            # 然后添加剩余的对话历史（跳过第一条）
-            for msg in recent_messages[1:-1]:  # 跳过第一条和最后一条（最后一条是当前消息）
-                messages.append(msg)
-            # 最后一条是当前用户消息
-            if len(recent_messages) > 1:
-                messages.append({"role": "user", "content": user_message})
-            # 如果只有一条历史消息，把当前消息作为新的 user message
-            else:
-                messages.append({"role": "user", "content": user_message})
+        # 去掉 recent_messages 末尾的当前用户消息（避免重复）
+        history = list(recent_messages) if recent_messages else []
+        if history and history[-1].get("role") == "user" and history[-1].get("content") == user_message:
+            history = history[:-1]
+
+        # 注入上下文 + 历史对话
+        if history:
+            # 上下文作为独立的 user message 注入
+            messages.append({"role": "user", "content": context})
+            messages.append({"role": "assistant", "content": "好的，我已了解你的评测结果和简历内容。"})
+            # 添加历史对话（保持 user/assistant 交替）
+            for msg in history:
+                messages.append({"role": msg["role"], "content": msg["content"]})
         else:
-            # 没有历史消息，直接注入上下文 + 当前消息
-            messages.append({"role": "user", "content": context + "\n\n用户说：" + user_message})
+            # 没有历史，上下文和当前消息合并
+            messages.append({"role": "user", "content": context})
+            messages.append({"role": "assistant", "content": "好的，我已了解你的评测结果和简历内容。"})
+
+        # 当前用户消息
+        messages.append({"role": "user", "content": user_message})
 
         return messages
 
