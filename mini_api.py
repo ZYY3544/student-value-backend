@@ -103,6 +103,18 @@ def _get_counter():
     except Exception:
         return 0
 
+def _calc_resume_health(abilities: dict) -> int:
+    """根据 5 维能力分数计算简历健康度（0-100）"""
+    if not abilities:
+        return 30
+    scores = [v.get('score', 0) for v in abilities.values() if isinstance(v, dict)]
+    if not scores:
+        return 30
+    avg = sum(scores) / len(scores)
+    # 将平均分映射到健康度：avg 0-100 → health 10-95
+    return max(10, min(95, int(avg * 0.85 + 10)))
+
+
 def _insert_log(log_data):
     """插入一条日志到数据库，返回新 ID"""
     if not DATABASE_URL:
@@ -901,6 +913,7 @@ def assess():
                 'radarData': radar_data,
                 'abilitySummary': ability_summary,
                 'salaryCompetitiveness': salary_competitiveness,  # 薪酬竞争力百分位 0-100
+                'resumeHealthScore': _calc_resume_health(abilities),  # 简历健康度 0-100
 
                 # 学生版附加信息
                 'schoolTier': school_tier,
