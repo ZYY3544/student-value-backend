@@ -27,12 +27,13 @@
 4. ChatAgent - 协调者（对外接口不变）
 """
 
+import re
 import uuid
 import json
 import time
 import threading
 from datetime import datetime
-from typing import Dict, Optional, List, Generator
+from typing import Dict, Optional, List, Generator, Tuple
 from openai import OpenAI
 
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
@@ -606,6 +607,132 @@ class ChatAgent:
 
         threading.Thread(target=_bg_process, daemon=True).start()
 
+    @staticmethod
+    def _parse_action(user_message: str) -> Tuple[Optional[str], str]:
+        """解析消息中的 [ACTION:xxx] 前缀，返回 (action, actual_message)"""
+        m = re.match(r'^\[ACTION:(.+?)\]\s*(.*)', user_message, re.DOTALL)
+        if m:
+            return m.group(1), m.group(2).strip() or '开始吧'
+        return None, user_message
+
+    def _build_report_analysis_prompt(self, session: dict) -> str:
+        """构建深度报告解读的 System Prompt（复用小程序 AI 深度分析）"""
+        ctx = session["assessment_context"]
+        resume_text = session["resume_text"]
+
+        abilities = ctx.get("abilities", {})
+        def get_ability(name: str) -> Tuple[float, str]:
+            info = abilities.get(name, {})
+            score = info.get("score", 50) / 10
+            explanation = info.get("explanation", "暂无数据")
+            return score, explanation
+
+        pro_score, pro_exp = get_ability("专业力")
+        mgmt_score, mgmt_exp = get_ability("管理力")
+        collab_score, collab_exp = get_ability("合作力")
+        think_score, think_exp = get_ability("思辨力")
+        innov_score, innov_exp = get_ability("创新力")
+
+        text_preview = resume_text[:2000]
+        salary_range = ctx.get("salaryRange", "未知")
+        city = ctx.get("city", "未知")
+        job_title = ctx.get("jobTitle", "未知")
+
+        return f"""你是一位资深的职业价值评估专家和薪酬谈判顾问，拥有丰富的人力资源和猎头经验。
+
+你的任务是基于用户的评估结果，生成一段个性化的深度洞察分析，核心目标是解释「为什么你值这个薪酬」。
+
+## 最重要的前置规则：输入质量判断
+
+在生成任何分析之前，你必须先判断用户提供的简历/履历内容是否包含足够的、有意义的职业信息。
+
+**如果原始简历内容存在以下任何一种情况，你必须拒绝编造分析，直接输出诚实的反馈：**
+- 内容是随机的字母、数字、符号或乱码
+- 内容过于简短，无法提取任何有价值的职业信息
+- 内容明显是胡编乱造的废话、测试文字
+- 内容完全缺乏具体的工作经历、项目经验、技能描述等关键信息
+
+**当输入不合格时，直接告知用户内容不足以进行分析，建议补充详细的真实职业经历。**
+
+**只有当简历内容确实包含有意义的、可分析的职业信息时，才按照下面的「分析框架」正常输出4段分析。**
+
+## 评估类型：CV 模式（校招简历评估）
+
+## 输入信息
+- 城市：{city}
+- 目标职位：{job_title}
+- 预计年薪估值区间：{salary_range}
+- 学历：{ctx.get('educationLevel', '未知')} | 专业：{ctx.get('major', '未知')}
+- 意向行业：{ctx.get('industry', '未知')} | 企业性质：{ctx.get('companyType', '未知')}
+- 五维能力得分（满分10分）：
+  - 专业力：{pro_score:.1f}分 - {pro_exp}
+  - 管理力：{mgmt_score:.1f}分 - {mgmt_exp}
+  - 合作力：{collab_score:.1f}分 - {collab_exp}
+  - 思辨力：{think_score:.1f}分 - {think_exp}
+  - 创新力：{innov_score:.1f}分 - {innov_exp}
+
+## 原始简历内容
+{text_preview}
+
+## 分析框架（仅在输入内容合格时使用）
+
+### 分析要点（按以下顺序输出4个段落）：
+
+**第一段：定价总结**（3-4句话）
+- 开头必须是："你的年薪估值定位在 {salary_range}，"
+- 用通俗的语言概括为什么值这个价
+- 简要说明你的经历在市场上处于什么水平
+
+**第二段：你的核心竞争力**（5-6句话）
+- 从简历中提取 2-3 个最亮眼的经历（引用原文）
+- 用自然语言说明这些经历为什么有市场价值
+- 解释这些经历体现了什么能力，为什么企业愿意为此付费
+
+**第三段：可以更值钱的地方**（4-5句话）
+- 基于简历内容，指出哪些方面如果加强，薪酬可以更高
+- 给出 1-2 个具体的努力方向
+- 语气要鼓励而非批评，是"提升空间"而非"缺点"
+
+**第四段：面试亮点建议**（3-4句话）
+- 面试时可以重点讲的 1-2 个故事/经历
+- 具体怎么讲才能突出价值
+- 可能被追问的问题，以及如何巧妙回应
+
+## 输出要求
+
+1. **总字数**：400-500字
+2. **结构**：严格按照上述4个段落输出，每个段落单独成段，段落之间空一行
+3. **引用原文**：关键段落引用 1-2 处简历原文（用引号标注）
+4. **语气**：像朋友在帮你分析，专业但不端着，通俗易懂
+5. **关键词高亮**：对每段中最重要的2-3个关键词或短语，用 **双星号** 包裹
+6. **禁止**：
+   - 除了关键词高亮外，不要使用其他 markdown 标记、序号或 bullet points
+   - 不要提及"职级"、"等级"、"level"、具体分数
+   - 不要用"专业力""管理力"等术语，用日常语言描述能力
+   - 不要泛泛而谈，每句话都要有具体依据
+   - 直接输出正文，不要有开场问候语"""
+
+    def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
+        """使用深度分析 prompt 流式生成报告解读"""
+        system_prompt = self._build_report_analysis_prompt(session)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                ],
+                temperature=0.3,
+                stream=True,
+            )
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            print(f"[Orchestrator] 报告解读生成失败: {e}")
+            yield "抱歉，生成报告解读时遇到了问题，请再试一次。"
+
     def chat(self, session_id: str, user_message: str) -> Optional[str]:
         """
         处理用户消息，返回完整回复（非流式）
@@ -628,11 +755,14 @@ class ChatAgent:
         if not session:
             return None
 
+        # 解析 [ACTION:xxx] 前缀
+        action, actual_message = self._parse_action(user_message)
+
         # 保存用户消息
-        self.session_manager.add_message(session_id, "user", user_message)
+        self.session_manager.add_message(session_id, "user", actual_message)
 
         # 阶段转换检测
-        new_phase = self._detect_phase_transition(user_message, session["phase"])
+        new_phase = self._detect_phase_transition(actual_message, session["phase"])
         if new_phase != session["phase"]:
             print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
             self.session_manager.update_session(session_id, {"phase": new_phase})
@@ -644,16 +774,31 @@ class ChatAgent:
         # 提取子 Agent 需要的上下文
         ctx = self._get_agent_context(session)
 
-        # ===== 路由到对应的子 Agent =====
+        # ===== 路由 =====
         try:
-            if phase == "optimizing":
-                print(f"[Orchestrator] 路由 → OptimizeAgent")
-                # 绑定当前会话的 tool_executor
+            if action == "解读报告":
+                print(f"[Orchestrator] 路由 → 深度报告解读（非流式）")
+                reply = "".join(self._stream_report_analysis(session))
+
+            elif action in ("润色项目经历", "模拟面试"):
+                enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 reply = self.optimize_agent.optimize_sync(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
-                    user_message=user_message,
+                    user_message=enhanced_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
+
+            elif phase == "optimizing":
+                print(f"[Orchestrator] 路由 → OptimizeAgent")
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
+                reply = self.optimize_agent.optimize_sync(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=actual_message,
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
@@ -668,14 +813,12 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                 )
             else:
-                # opening 阶段不应该走到这里（start_session 已处理）
-                # 兜底：用 OptimizeAgent
                 print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}）")
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 reply = self.optimize_agent.optimize_sync(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
-                    user_message=user_message,
+                    user_message=actual_message,
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
@@ -697,12 +840,13 @@ class ChatAgent:
         """
         处理用户消息，返回流式回复（SSE 格式）
 
-        协调者流程（与 chat 相同，但子 Agent 返回流式输出）：
-        1. 保存用户消息
-        2. 检测阶段转换
-        3. 路由到对应子 Agent（流式）
-        4. 收集完整回复并保存
-        5. 后处理
+        协调者流程：
+        1. 解析 [ACTION:xxx] 前缀
+        2. 保存用户消息
+        3. 检测阶段转换
+        4. 路由到对应子 Agent（流式）
+        5. 收集完整回复并保存
+        6. 后处理
 
         Yields:
             逐块的文本内容
@@ -712,11 +856,16 @@ class ChatAgent:
             yield "[ERROR] 会话已过期或不存在"
             return
 
-        # 保存用户消息
-        self.session_manager.add_message(session_id, "user", user_message)
+        # 解析 [ACTION:xxx] 前缀
+        action, actual_message = self._parse_action(user_message)
+        if action:
+            print(f"[Orchestrator] 检测到动作前缀: ACTION={action}, 用户说: {actual_message}")
 
-        # 阶段转换检测
-        new_phase = self._detect_phase_transition(user_message, session["phase"])
+        # 保存用户消息（存实际文本，不存前缀）
+        self.session_manager.add_message(session_id, "user", actual_message)
+
+        # 阶段转换检测（用实际消息，不含前缀）
+        new_phase = self._detect_phase_transition(actual_message, session["phase"])
         if new_phase != session["phase"]:
             print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
             self.session_manager.update_session(session_id, {"phase": new_phase})
@@ -731,15 +880,32 @@ class ChatAgent:
         full_reply = ""
 
         try:
-            # ===== 路由到对应的子 Agent（流式） =====
-            if phase == "optimizing":
-                print(f"[Orchestrator] 路由 → OptimizeAgent（流式）")
-                # 绑定当前会话的 tool_executor
+            # ===== 特殊动作路由 =====
+            if action == "解读报告":
+                print(f"[Orchestrator] 路由 → 深度报告解读（专用 Prompt）")
+                stream = self._stream_report_analysis(session)
+
+            elif action in ("润色项目经历", "模拟面试"):
+                print(f"[Orchestrator] 路由 → OptimizeAgent（动作: {action}）")
+                enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 stream = self.optimize_agent.optimize(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
-                    user_message=user_message,
+                    user_message=enhanced_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
+
+            # ===== 常规阶段路由 =====
+            elif phase == "optimizing":
+                print(f"[Orchestrator] 路由 → OptimizeAgent（流式）")
+                self.optimize_agent.tool_executor = ctx.get("tool_executor")
+                stream = self.optimize_agent.optimize(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=actual_message,
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
@@ -754,13 +920,12 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                 )
             else:
-                # 兜底
                 print(f"[Orchestrator] 兜底路由 → OptimizeAgent（阶段: {phase}，流式）")
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 stream = self.optimize_agent.optimize(
                     assessment_context=ctx["assessment_context"],
                     resume_text=ctx["resume_text"],
-                    user_message=user_message,
+                    user_message=actual_message,
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
