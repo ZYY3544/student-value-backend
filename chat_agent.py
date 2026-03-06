@@ -890,7 +890,7 @@ class ChatAgent:
                 print(f"[Orchestrator] 路由 → 深度报告解读（专用 Prompt）")
                 stream = self._stream_report_analysis(session)
 
-            elif action in ("润色项目经历", "模拟面试"):
+            elif action in ("润色简历", "润色项目经历", "模拟面试", "职业规划"):
                 print(f"[Orchestrator] 路由 → OptimizeAgent（动作: {action}）")
                 enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
