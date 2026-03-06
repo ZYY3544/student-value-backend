@@ -485,11 +485,14 @@ class ChatAgent:
 
         threading.Thread(target=_bg_split, daemon=True).start()
 
-        # ===== 调用 DiagnosisAgent 生成开场白 =====
-        print(f"[Orchestrator] 路由 → DiagnosisAgent（开场诊断）")
-        greeting = self.diagnosis_agent.diagnose(
-            assessment_context=assessment_context,
-            resume_text=resume_text
+        # ===== 使用模板开场白（无需 LLM，即时返回） =====
+        print(f"[Orchestrator] 使用模板开场白（跳过 DiagnosisAgent LLM 调用）")
+        greeting = (
+            "嗨，欢迎来到简历优化工坊～ 我已经看过你的评测结果和简历啦，接下来可以帮你做这几件事：\n\n"
+            "📝 **简历优化**：帮你把简历写得更有竞争力\n"
+            "🔍 **岗位搜索**：搜索市场上的岗位，了解招聘要求\n"
+            "🎯 **JD 匹配分析**：对比简历和目标岗位的匹配度\n\n"
+            "你想从哪个开始呢？"
         )
 
         # 保存到对话历史
