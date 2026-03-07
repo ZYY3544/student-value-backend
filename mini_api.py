@@ -1024,6 +1024,69 @@ def update_duration():
 # 简历优化 Agent API
 # ===========================================
 
+
+def _parse_edit_block(edit_block: str, resume_sections: list) -> dict:
+    """
+    解析 <<<EDIT...EDIT>>> 块，匹配 section
+
+    Returns:
+        {"sectionId": "section-0", "original": "...", "suggested": "...", "rationale": "..."}
+        或 None（解析失败）
+    """
+    try:
+        # 提取各字段
+        section_match = re.search(r'SECTION:\s*(.+?)(?:\n|$)', edit_block)
+        original_match = re.search(r'ORIGINAL:\s*(.+?)(?=\nSUGGESTED:)', edit_block, re.DOTALL)
+        suggested_match = re.search(r'SUGGESTED:\s*(.+?)(?=\nRATIONALE:)', edit_block, re.DOTALL)
+        rationale_match = re.search(r'RATIONALE:\s*(.+?)(?=\nEDIT>>>)', edit_block, re.DOTALL)
+
+        if not all([section_match, original_match, suggested_match, rationale_match]):
+            print(f"[Agent API] 编辑块解析失败，字段不完整")
+            return None
+
+        section_title = section_match.group(1).strip()
+        original = original_match.group(1).strip()
+        suggested = suggested_match.group(1).strip()
+        rationale = rationale_match.group(1).strip()
+
+        # 按 title 模糊匹配 section
+        matched_id = None
+        for i, sec in enumerate(resume_sections):
+            sec_title = sec.get('title', '')
+            if section_title in sec_title or sec_title in section_title:
+                matched_id = f'section-{i}'
+                break
+
+        # 如果没精确匹配，尝试部分匹配
+        if not matched_id:
+            for i, sec in enumerate(resume_sections):
+                sec_title = sec.get('title', '')
+                # 取标题中的关键词匹配
+                if any(kw in sec_title for kw in section_title.split('-') if len(kw) >= 2):
+                    matched_id = f'section-{i}'
+                    break
+
+        if not matched_id and resume_sections:
+            # 最后兜底：匹配内容包含 original 的 section
+            for i, sec in enumerate(resume_sections):
+                if original[:20] in sec.get('content', ''):
+                    matched_id = f'section-{i}'
+                    break
+
+        if not matched_id:
+            matched_id = 'section-0'  # 兜底
+
+        return {
+            'sectionId': matched_id,
+            'original': original,
+            'suggested': suggested,
+            'rationale': rationale,
+        }
+    except Exception as e:
+        print(f"[Agent API] 编辑块解析异常: {e}")
+        return None
+
+
 @app.route('/api/chat/start', methods=['POST'])
 def chat_start():
     """
@@ -1145,12 +1208,48 @@ def chat_message():
         if not session:
             return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
 
+        canvas_mode = data.get('canvasMode', False)
+
         if use_stream:
             # 流式模式：SSE
             def generate():
                 try:
-                    for chunk in chat_agent.chat_stream(session_id, message):
-                        yield f"data: {json.dumps({'type': 'text', 'content': chunk}, ensure_ascii=False)}\n\n"
+                    if canvas_mode:
+                        # 画布模式：缓冲检测 <<<EDIT...EDIT>>> 块
+                        buffer = ''
+                        session = chat_agent.session_manager.get_session(session_id)
+                        resume_sections = session.get('resume_sections', []) if session else []
+
+                        for chunk in chat_agent.chat_stream(session_id, message, canvas_mode=True):
+                            buffer += chunk
+
+                            # 持续处理缓冲区中的完整编辑块
+                            while '<<<EDIT' in buffer and 'EDIT>>>' in buffer:
+                                edit_start = buffer.index('<<<EDIT')
+                                edit_end = buffer.index('EDIT>>>') + len('EDIT>>>')
+
+                                # 发送编辑块之前的普通文本
+                                before_text = buffer[:edit_start].strip()
+                                if before_text:
+                                    yield f"data: {json.dumps({'type': 'text', 'content': before_text}, ensure_ascii=False)}\n\n"
+
+                                # 解析编辑块
+                                edit_block = buffer[edit_start:edit_end]
+                                edit_data = _parse_edit_block(edit_block, resume_sections)
+                                if edit_data:
+                                    yield f"data: {json.dumps({'type': 'edit', **edit_data}, ensure_ascii=False)}\n\n"
+
+                                buffer = buffer[edit_end:]
+
+                        # 发送剩余的普通文本
+                        remaining = buffer.strip()
+                        if remaining:
+                            yield f"data: {json.dumps({'type': 'text', 'content': remaining}, ensure_ascii=False)}\n\n"
+                    else:
+                        # 普通模式
+                        for chunk in chat_agent.chat_stream(session_id, message):
+                            yield f"data: {json.dumps({'type': 'text', 'content': chunk}, ensure_ascii=False)}\n\n"
+
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 except Exception as e:
                     print(f"[Agent API] 流式输出错误: {e}")
@@ -1180,6 +1279,116 @@ def chat_message():
         print(f"[Agent API] /chat/message 失败: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat/sections', methods=['GET'])
+def chat_sections():
+    """
+    获取简历结构化段落
+
+    参数: ?sessionId=uuid
+
+    响应:
+    - 解析中: {"success": true, "data": {"status": "parsing"}}
+    - 完成:   {"success": true, "data": {"status": "ready", "sections": [...]}}
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    session_id = request.args.get('sessionId', '')
+    if not session_id:
+        return jsonify({'success': False, 'error': '缺少 sessionId'}), 400
+
+    session = chat_agent.session_manager.get_session(session_id)
+    if not session:
+        return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+    resume_sections = session.get('resume_sections')
+    if resume_sections is None:
+        return jsonify({'success': True, 'data': {'status': 'parsing'}}), 200
+
+    # 为每个 section 补充 id 字段
+    sections_with_id = []
+    for i, sec in enumerate(resume_sections):
+        sections_with_id.append({
+            'id': f'section-{i}',
+            'type': sec.get('type', 'other'),
+            'title': sec.get('title', ''),
+            'content': sec.get('content', ''),
+        })
+
+    return jsonify({
+        'success': True,
+        'data': {'status': 'ready', 'sections': sections_with_id}
+    }), 200
+
+
+@app.route('/api/chat/edit-action', methods=['POST'])
+def chat_edit_action():
+    """
+    处理用户对编辑建议的采纳/忽略操作
+
+    请求体:
+    {
+        "sessionId": "uuid",
+        "sectionId": "section-0",
+        "action": "accept" | "reject",
+        "suggestedText": "改写后的文本"
+    }
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId', '')
+        section_id = data.get('sectionId', '')
+        action = data.get('action', '')
+        suggested_text = data.get('suggestedText', '')
+
+        if not session_id or not section_id or action not in ('accept', 'reject'):
+            return jsonify({'success': False, 'error': '参数不完整'}), 400
+
+        session = chat_agent.session_manager.get_session(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+        resume_sections = session.get('resume_sections')
+        if not resume_sections:
+            return jsonify({'success': False, 'error': '简历段落数据不存在'}), 400
+
+        # 从 sectionId 提取索引
+        try:
+            idx = int(section_id.replace('section-', ''))
+        except ValueError:
+            return jsonify({'success': False, 'error': '无效的 sectionId'}), 400
+
+        if idx < 0 or idx >= len(resume_sections):
+            return jsonify({'success': False, 'error': 'sectionId 超出范围'}), 400
+
+        memory = session.get('memory')
+
+        if action == 'accept':
+            # 更新 section content
+            resume_sections[idx]['content'] = suggested_text
+            chat_agent.session_manager.update_session(session_id, {
+                'resume_sections': resume_sections
+            })
+            # 记入结构化记忆
+            if memory:
+                title = resume_sections[idx].get('title', '')
+                memory.add_agreed_modification(f"采纳了「{title}」段落的修改建议")
+        else:
+            # reject：记入 memory 避免重复建议
+            if memory:
+                title = resume_sections[idx].get('title', '')
+                memory.add_agreed_modification(f"用户拒绝了「{title}」段落的修改建议，不要重复建议")
+
+        return jsonify({'success': True, 'data': {'action': action, 'sectionId': section_id}}), 200
+
+    except Exception as e:
+        print(f"[Agent API] /chat/edit-action 失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

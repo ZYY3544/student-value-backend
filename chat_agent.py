@@ -738,7 +738,7 @@ class ChatAgent:
             print(f"[Orchestrator] 报告解读生成失败: {e}")
             yield "抱歉，生成报告解读时遇到了问题，请再试一次。"
 
-    def chat(self, session_id: str, user_message: str) -> Optional[str]:
+    def chat(self, session_id: str, user_message: str, canvas_mode: bool = False) -> Optional[str]:
         """
         处理用户消息，返回完整回复（非流式）
 
@@ -752,6 +752,7 @@ class ChatAgent:
         Args:
             session_id: 会话ID
             user_message: 用户消息
+            canvas_mode: 是否处于画布模式
 
         Returns:
             Agent 的回复文本，会话无效返回 None
@@ -795,6 +796,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
 
             elif phase == "optimizing":
@@ -807,6 +809,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent")
@@ -827,6 +830,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
 
             # 保存回复
@@ -841,7 +845,7 @@ class ChatAgent:
             print(f"[Orchestrator] 对话失败: {e}")
             return "抱歉，处理你的消息时遇到了问题，请再试一次。"
 
-    def chat_stream(self, session_id: str, user_message: str) -> Generator[str, None, None]:
+    def chat_stream(self, session_id: str, user_message: str, canvas_mode: bool = False) -> Generator[str, None, None]:
         """
         处理用户消息，返回流式回复（SSE 格式）
 
@@ -901,6 +905,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
 
             # ===== 常规阶段路由 =====
@@ -914,6 +919,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent（流式）")
@@ -934,6 +940,7 @@ class ChatAgent:
                     conversation_summary=ctx["conversation_summary"],
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
+                    canvas_mode=canvas_mode,
                 )
 
             # 透传流式输出，同时收集完整回复
