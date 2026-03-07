@@ -614,18 +614,6 @@ def assess():
     try:
         data = request.get_json()
 
-        # 邀请码校验（防止绕过前端直接调 API）
-        invite_code = (data.get('inviteCode') or '').strip().upper()
-        if ALL_VALID_CODES:  # 仅当配置了邀请码时才校验
-            if not invite_code or invite_code not in ALL_VALID_CODES:
-                return jsonify({'success': False, 'error': '邀请码无效，请重新验证'}), 403
-            # 已消耗的一次性码彻底拒绝
-            if invite_code in CONSUMED_INVITE_CODES:
-                return jsonify({'success': False, 'error': '该邀请码已使用，请输入新的邀请码'}), 403
-            # 一次性码必须已经验证过（在 USED 列表中）；永久码直接放行
-            if invite_code not in PERMANENT_INVITE_CODES and invite_code not in USED_INVITE_CODES:
-                return jsonify({'success': False, 'error': '邀请码未经验证'}), 403
-
         # 城市 → 城市等级映射
         CITY_TIER_MAP = {
             "北京": "一线城市", "上海": "一线城市", "深圳": "一线城市", "广州": "一线城市",
@@ -701,7 +689,7 @@ def assess():
                 'time': now, 'type': 'insufficient',
                 'city': raw_city, 'industry': industry, 'function': job_function, 'title': job_title,
                 'resume_len': len(resume_text),
-                'invite_code': invite_code or None,
+                'invite_code': None,
                 'welcome_s': welcome_s,
                 'form_s': form_s,
                 'school_name': school_name or None,
@@ -872,7 +860,7 @@ def assess():
             'abilities': f"专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}",
             'deep_insight': None,
             'elapsed': f"{elapsed_time:.2f}",
-            'invite_code': invite_code or None,
+            'invite_code': None,
             'welcome_s': welcome_s,
             'form_s': form_s,
             'school_name': school_name or None,
@@ -892,13 +880,6 @@ def assess():
         print(f"能力: 专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}")
         print(f"耗时: {elapsed_time:.2f}秒")
         print(f"══════════════════════════════════════════\n")
-
-        # 评估成功：消耗一次性邀请码（永久码不受影响）
-        if invite_code and invite_code not in PERMANENT_INVITE_CODES and invite_code in INVITE_CODES_ALL:
-            with _codes_lock:
-                CONSUMED_INVITE_CODES.add(invite_code)
-                _save_consumed_codes(CONSUMED_INVITE_CODES)
-            print(f"[邀请码] 一次性码 {invite_code} 已消耗（评估完成），剩余可用: {INVITE_CODES_ALL - CONSUMED_INVITE_CODES}")
 
         return jsonify({
             'success': True,
@@ -939,7 +920,7 @@ def assess():
             'time': now, 'type': 'error',
             'city': _city, 'industry': _industry, 'function': _func, 'title': _title,
             'error': f"{type(e).__name__}: {e}", 'elapsed': f"{elapsed_time:.2f}",
-            'invite_code': locals().get('invite_code'),
+            'invite_code': None,
             'welcome_s': locals().get('welcome_s'),
             'form_s': locals().get('form_s'),
         })
