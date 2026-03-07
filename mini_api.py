@@ -8,7 +8,7 @@
 默认端口: 5001
 """
 
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, Response, send_from_directory, send_file
 from flask_cors import CORS
 from config import config
 from llm_service import LLMService
@@ -1491,6 +1491,50 @@ def user_assessments():
         return jsonify({'success': True, 'data': resp.data}), 200
     except Exception as e:
         print(f"[用户历史] 查询失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===========================================
+# 简历 Word 导出
+# ===========================================
+
+@app.route('/api/chat/resume/export', methods=['POST'])
+def chat_resume_export():
+    """
+    将当前 session 的简历导出为 Word 文档
+
+    请求体: { "sessionId": "uuid" }
+    响应: .docx 文件流
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId', '')
+        if not session_id:
+            return jsonify({'success': False, 'error': '缺少 sessionId'}), 400
+
+        session = chat_agent.session_manager.get_session(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+        resume_sections = session.get('resume_sections')
+        if not resume_sections:
+            return jsonify({'success': False, 'error': '简历数据不存在，请先进入简历画布'}), 400
+
+        from resume_export import generate_resume_docx
+        buffer = generate_resume_docx(resume_sections)
+
+        return send_file(
+            buffer,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            as_attachment=True,
+            download_name='我的简历.docx',
+        )
+
+    except Exception as e:
+        print(f"[简历导出] 失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
