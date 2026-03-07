@@ -32,6 +32,20 @@ import json
 import threading
 from datetime import datetime
 
+# Supabase 客户端（用户数据持久化）
+supabase_client = None
+try:
+    _sb_url = os.getenv('SUPABASE_URL', '')
+    _sb_key = os.getenv('SUPABASE_SERVICE_KEY', '')
+    if _sb_url and _sb_key:
+        from supabase import create_client
+        supabase_client = create_client(_sb_url, _sb_key)
+        print("✓ Supabase 客户端初始化成功")
+    else:
+        print("⚠ SUPABASE_URL/SUPABASE_SERVICE_KEY 未设置，Supabase 功能不可用")
+except Exception as _sb_err:
+    print(f"⚠ Supabase 初始化失败: {_sb_err}")
+
 # 全局评估计数器 & 日志存储（PostgreSQL 持久化）
 import psycopg2
 import psycopg2.extras
@@ -881,32 +895,50 @@ def assess():
         print(f"耗时: {elapsed_time:.2f}秒")
         print(f"══════════════════════════════════════════\n")
 
-        return jsonify({
-            'success': True,
-            'data': {
-                'salaryRange': salary_range,
-                'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
-                'level': job_grade,
-                'levelTag': level_tag,
-                'levelDesc': level_desc,
+        response_data = {
+            'salaryRange': salary_range,
+            'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
+            'level': job_grade,
+            'levelTag': level_tag,
+            'levelDesc': level_desc,
 
-                'abilities': abilities,
-                'radarData': radar_data,
-                'abilitySummary': ability_summary,
-                'salaryCompetitiveness': salary_competitiveness,  # 薪酬竞争力百分位 0-100
-                'resumeHealthScore': _calc_resume_health(abilities),  # 简历健康度 0-100
+            'abilities': abilities,
+            'radarData': radar_data,
+            'abilitySummary': ability_summary,
+            'salaryCompetitiveness': salary_competitiveness,  # 薪酬竞争力百分位 0-100
+            'resumeHealthScore': _calc_resume_health(abilities),  # 简历健康度 0-100
 
-                # 学生版附加信息
-                'schoolTier': school_tier,
+            # 学生版附加信息
+            'schoolTier': school_tier,
 
-                # 解析后的简历文本（供聊天 Agent 使用）
-                'resumeText': resume_text,
+            # 解析后的简历文本（供聊天 Agent 使用）
+            'resumeText': resume_text,
 
-                # 调试信息（可选，生产环境可移除）
-                'factors': factors,
-                'logId': log_id,
-            }
-        }), 200
+            # 调试信息（可选，生产环境可移除）
+            'factors': factors,
+            'logId': log_id,
+        }
+
+        # 如果前端传了 userId，同步存入 Supabase assessments 表
+        user_id = data.get('userId')
+        if user_id and supabase_client:
+            try:
+                supabase_client.table('assessments').insert({
+                    'user_id': user_id,
+                    'resume_text': resume_text,
+                    'form_data': {
+                        'city': raw_city, 'industry': industry,
+                        'jobTitle': job_title, 'jobFunction': job_function,
+                        'educationLevel': education_level, 'major': major,
+                        'companyType': company_type, 'targetCompany': target_company,
+                    },
+                    'result': response_data,
+                }).execute()
+                print(f"[Supabase] 评估记录已存入 assessments 表 (user={user_id[:8]}...)")
+            except Exception as sb_err:
+                print(f"[Supabase] 评估存储失败: {sb_err}")
+
+        return jsonify({'success': True, 'data': response_data}), 200
 
     except Exception as e:
         elapsed_time = time.time() - start_time
@@ -1135,9 +1167,13 @@ def chat_start():
             return jsonify({'success': False, 'error': '简历内容解析失败'}), 400
 
         # 创建会话并生成开场白
+        user_id = data.get('userId')
+        assessment_id = data.get('assessmentId')
         result = chat_agent.start_session(
             assessment_context=assessment_context,
-            resume_text=resume_text
+            resume_text=resume_text,
+            user_id=user_id,
+            assessment_id=assessment_id,
         )
 
         print(f"[Agent API] 会话已创建: {result['session_id'][:8]}...")
@@ -1426,6 +1462,36 @@ def chat_history():
         'success': True,
         'data': {'messages': history}
     }), 200
+
+
+# ===========================================
+# 用户评估历史 API（Supabase）
+# ===========================================
+
+@app.route('/api/user/assessments', methods=['GET'])
+def user_assessments():
+    """
+    获取用户的评估历史列表
+
+    参数: ?userId=uuid
+    """
+    user_id = request.args.get('userId', '')
+    if not user_id:
+        return jsonify({'success': False, 'error': '缺少 userId'}), 400
+
+    if not supabase_client:
+        return jsonify({'success': False, 'error': 'Supabase 未配置'}), 503
+
+    try:
+        resp = supabase_client.table('assessments') \
+            .select('id, form_data, result, created_at') \
+            .eq('user_id', user_id) \
+            .order('created_at', desc=True) \
+            .execute()
+        return jsonify({'success': True, 'data': resp.data}), 200
+    except Exception as e:
+        print(f"[用户历史] 查询失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ===========================================

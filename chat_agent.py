@@ -31,6 +31,7 @@ import re
 import uuid
 import json
 import time
+import os
 import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
@@ -38,6 +39,17 @@ from openai import OpenAI
 
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
 from tool_executor import ToolExecutor
+
+# Supabase 客户端（延迟导入，可能未安装）
+_supabase_client = None
+try:
+    _sb_url = os.getenv('SUPABASE_URL', '')
+    _sb_key = os.getenv('SUPABASE_SERVICE_KEY', '')
+    if _sb_url and _sb_key:
+        from supabase import create_client as _sb_create
+        _supabase_client = _sb_create(_sb_url, _sb_key)
+except Exception:
+    pass
 
 
 # ===========================================
@@ -119,7 +131,8 @@ class SessionManager:
         self._lock = threading.Lock()
         self._ttl = ttl_seconds
 
-    def create_session(self, assessment_context: dict, resume_text: str) -> str:
+    def create_session(self, assessment_context: dict, resume_text: str,
+                       user_id: str = None, assessment_id: str = None) -> str:
         """创建新会话，返回 session_id"""
         session_id = str(uuid.uuid4())
         now = time.time()
@@ -136,12 +149,15 @@ class SessionManager:
             "memory": ConversationMemory(),  # 结构化记忆（跨 Agent 共享）
             "compressed_history": "",  # 压缩后的早期对话摘要
             "message_count": 0,  # 总消息计数（用于判断是否需要压缩）
+            "user_id": user_id,  # Supabase 用户 ID（可选）
+            "assessment_id": assessment_id,  # Supabase 评估记录 ID（可选）
         }
 
         with self._lock:
             self._sessions[session_id] = session
 
         print(f"[Orchestrator] 创建会话 {session_id[:8]}...")
+        self._persist_session_to_supabase(session_id, session)
         return session_id
 
     def get_session(self, session_id: str) -> Optional[dict]:
@@ -173,6 +189,7 @@ class SessionManager:
                 session["messages"].append({"role": role, "content": content})
                 session["message_count"] += 1
                 session["updated_at"] = time.time()
+        self._persist_message_to_supabase(session_id, role, content)
 
     def cleanup_expired(self):
         """清理所有过期会话"""
@@ -184,6 +201,46 @@ class SessionManager:
                 del self._sessions[sid]
             if expired:
                 print(f"[Orchestrator] 清理了 {len(expired)} 个过期会话")
+
+    def _persist_session_to_supabase(self, session_id: str, session: dict):
+        """异步将 chat session 写入 Supabase（非阻塞）"""
+        if not _supabase_client:
+            return
+        def _do():
+            try:
+                user_id = session.get('user_id')
+                assessment_id = session.get('assessment_id')
+                if not user_id:
+                    return
+                _supabase_client.table('chat_sessions').upsert({
+                    'id': session_id,
+                    'user_id': user_id,
+                    'assessment_id': assessment_id,
+                    'phase': session.get('phase', 'opening'),
+                    'conversation_memory': session.get('memory', ConversationMemory()).to_context_string() if session.get('memory') else None,
+                }).execute()
+            except Exception as e:
+                print(f"[Supabase] chat_sessions 持久化失败: {e}")
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _persist_message_to_supabase(self, session_id: str, role: str, content: str):
+        """异步将聊天消息写入 Supabase（非阻塞）"""
+        if not _supabase_client:
+            return
+        def _do():
+            try:
+                # 检查此 session 是否有对应的 db session（带 user_id）
+                session = self._sessions.get(session_id)
+                if not session or not session.get('user_id'):
+                    return
+                _supabase_client.table('chat_messages').insert({
+                    'session_id': session_id,
+                    'role': role,
+                    'content': content,
+                }).execute()
+            except Exception as e:
+                print(f"[Supabase] chat_messages 持久化失败: {e}")
+        threading.Thread(target=_do, daemon=True).start()
 
 
 # ===========================================
@@ -434,7 +491,8 @@ class ChatAgent:
         if llm_service and convergence_engine:
             print(f"  - ToolExecutor:   Function Call 工具调用已启用")
 
-    def start_session(self, assessment_context: dict, resume_text: str) -> dict:
+    def start_session(self, assessment_context: dict, resume_text: str,
+                      user_id: str = None, assessment_id: str = None) -> dict:
         """
         开启新的对话会话
 
@@ -447,13 +505,17 @@ class ChatAgent:
         Args:
             assessment_context: 评测结果（包含 factors, abilities, grade, salary 等）
             resume_text: 简历原文
+            user_id: Supabase 用户 ID（可选，用于数据持久化）
+            assessment_id: Supabase 评估记录 ID（可选）
 
         Returns:
             {"session_id": "...", "greeting": "..."}
         """
         session_id = self.session_manager.create_session(
             assessment_context=assessment_context,
-            resume_text=resume_text
+            resume_text=resume_text,
+            user_id=user_id,
+            assessment_id=assessment_id,
         )
 
         # 为本次会话创建 ToolExecutor 并绑定到 OptimizeAgent
