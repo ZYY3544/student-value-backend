@@ -87,7 +87,7 @@ class ToolExecutor:
 
     def search_jobs(self, keyword: str, city: str = "全国") -> str:
         """
-        多源搜索招聘信息：Bing API → DuckDuckGo → LLM 兜底
+        多源搜索招聘信息：Google Custom Search API → LLM 兜底
 
         Args:
             keyword: 搜索关键词（岗位名称）
@@ -99,60 +99,49 @@ class ToolExecutor:
         city_text = city if city != "全国" else ""
         print(f"[ToolExecutor] search_jobs: keyword={keyword}, city={city}")
 
-        # 优先用 Bing 多源搜索
-        queries = [
-            f"{keyword} {city_text} 校招 JD site:zhipin.com OR site:liepin.com",
-            f"{keyword} {city_text} 校招 面经 site:nowcoder.com",
-            f"{keyword} 校招 经验 site:xiaohongshu.com",
-        ]
+        # Google Custom Search（CSE 已限定 zhipin/liepin/nowcoder/xiaohongshu）
+        query = f"{keyword} {city_text} 校招"
+        results = self._google_search(query, num=8)
 
-        all_results = []
-        for q in queries:
-            results = self._bing_search(q, count=3)
-            for r in results:
-                url = r.get("link", "")
-                if "zhipin.com" in url or "liepin.com" in url:
-                    r["source_type"] = "JD"
-                elif "nowcoder.com" in url:
-                    r["source_type"] = "面经"
-                elif "xiaohongshu.com" in url:
-                    r["source_type"] = "求职经验"
-                else:
-                    r["source_type"] = "其他"
-            all_results.extend(results)
+        for r in results:
+            url = r.get("link", "")
+            if "zhipin.com" in url or "liepin.com" in url:
+                r["source_type"] = "JD"
+            elif "nowcoder.com" in url:
+                r["source_type"] = "面经"
+            elif "xiaohongshu.com" in url:
+                r["source_type"] = "求职经验"
+            else:
+                r["source_type"] = "其他"
 
-        # 去重（按 URL）
-        seen = set()
-        unique = [r for r in all_results if r["link"] not in seen and not seen.add(r["link"])]
-
-        if unique:
+        if results:
             return json.dumps(
-                {"keyword": keyword, "city": city, "source": "bing_search", "results": unique[:8]},
+                {"keyword": keyword, "city": city, "source": "google_search", "results": results[:8]},
                 ensure_ascii=False,
             )
 
-        # Bing 无结果 → LLM 兜底
+        # Google 无结果 → LLM 兜底
         print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
         return self._llm_search_fallback(keyword, city)
 
-    def _bing_search(self, query: str, count: int = 5) -> list:
-        """调用 Bing Web Search API"""
-        api_key = os.environ.get('BING_SEARCH_API_KEY')
-        if not api_key:
+    def _google_search(self, query: str, num: int = 8) -> list:
+        """调用 Google Custom Search JSON API"""
+        api_key = os.environ.get('GOOGLE_API_KEY')
+        cx = os.environ.get('GOOGLE_CSE_ID')
+        if not api_key or not cx:
             return []
-        url = "https://api.bing.microsoft.com/v7.0/search"
-        headers = {"Ocp-Apim-Subscription-Key": api_key}
-        params = {"q": query, "count": count, "mkt": "zh-CN", "textFormat": "Raw"}
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {"key": api_key, "cx": cx, "q": query, "num": min(num, 10)}
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             return [
-                {"title": r["name"], "link": r["url"], "snippet": r.get("snippet", "")}
-                for r in data.get("webPages", {}).get("value", [])
+                {"title": r["title"], "link": r["link"], "snippet": r.get("snippet", "")}
+                for r in data.get("items", [])
             ]
         except Exception as e:
-            print(f"[ToolExecutor] Bing 搜索失败: {e}")
+            print(f"[ToolExecutor] Google 搜索失败: {e}")
             return []
 
     def _llm_search_fallback(self, keyword: str, city: str) -> str:
