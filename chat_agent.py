@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
 from openai import OpenAI
 
-from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
+from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, PlanningAgent
 from tool_executor import ToolExecutor
 
 # Supabase 客户端（延迟导入，可能未安装）
@@ -151,6 +151,9 @@ class SessionManager:
             "message_count": 0,  # 总消息计数（用于判断是否需要压缩）
             "user_id": user_id,  # Supabase 用户 ID（可选）
             "assessment_id": assessment_id,  # Supabase 评估记录 ID（可选）
+            "optimization_plan": None,  # PlanningAgent 生成的优化计划
+            "pending_phase_transition": None,  # 待确认的阶段转换（如 "summary"）
+            "hallucination_warning": None,  # 幻觉检测警告
         }
 
         with self._lock:
@@ -421,6 +424,77 @@ class HistoryCompressor:
 
 
 # ===========================================
+# Reflection 幻觉检测
+# ===========================================
+
+class ReflectionChecker:
+    """
+    幻觉检测器 —— 检查改写内容是否引入了原文中不存在的数据
+
+    对比简历原文和 Agent 改写内容，检测编造的数字/公司/角色/技能。
+    后台异步执行，检测到幻觉时存入 session，下一轮对话时警告用户。
+    """
+
+    SYSTEM_PROMPT = """你是一个严格的事实核查专家。请对比用户的简历原文和AI改写后的内容，检查改写中是否引入了原文中不存在的信息。
+
+重点检查以下类型的幻觉：
+1. 编造的具体数字（如原文没提到的百分比、金额、用户量等）
+2. 编造的公司名、项目名、产品名
+3. 编造的职位/角色（如把"参与"升级为"主导"、把"实习"说成"全职"）
+4. 编造的技能或工具（原文没提到的技术栈）
+5. 编造的成果或荣誉
+
+输出严格 JSON 格式：
+{
+    "has_hallucination": true/false,
+    "issues": [
+        "具体描述发现的幻觉问题（每条一句话）"
+    ]
+}
+
+注意：
+- 合理的措辞润色不算幻觉（如"负责"改为"主导"在语义合理范围内不算）
+- 只标记明确编造的、原文中完全没有依据的信息
+- 如果改写使用了「[待补充: ...]」标记，这不算幻觉
+- 如果没有发现幻觉，issues 为空数组"""
+
+    @staticmethod
+    def check(client: OpenAI, model: str, resume_text: str, rewrite_text: str) -> Optional[dict]:
+        """
+        检查改写内容是否存在幻觉
+
+        Args:
+            client: OpenAI 客户端
+            model: 模型名称
+            resume_text: 简历原文
+            rewrite_text: 改写后的内容
+
+        Returns:
+            检测结果 dict，失败返回 None
+        """
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": ReflectionChecker.SYSTEM_PROMPT},
+                    {"role": "user", "content": f"【简历原文】\n{resume_text[:3000]}\n\n【改写内容】\n{rewrite_text[:2000]}"}
+                ],
+                temperature=0.0,
+                max_tokens=300,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(response.choices[0].message.content)
+            if result.get("has_hallucination"):
+                print(f"[ReflectionChecker] 检测到幻觉: {result.get('issues', [])}")
+            else:
+                print(f"[ReflectionChecker] 未检测到幻觉")
+            return result
+        except Exception as e:
+            print(f"[ReflectionChecker] 检测失败（非阻塞）: {e}")
+            return None
+
+
+# ===========================================
 # 简历结构化拆分
 # ===========================================
 
@@ -520,12 +594,14 @@ class ChatAgent:
 
         # 初始化子 Agent（每个 Agent 拥有独立的 Prompt，共享 LLM client）
         self.diagnosis_agent = DiagnosisAgent(client, model)
+        self.planning_agent = PlanningAgent(client, model)
         # OptimizeAgent 的 tool_executor 在 start_session 时按会话创建
         self.optimize_agent = OptimizeAgent(client, model)
         self.report_agent = ReportAgent(client, model)
 
         print("[Orchestrator] 多 Agent 系统初始化完成")
         print(f"  - DiagnosisAgent: 开场诊断（温度 {DiagnosisAgent.TEMPERATURE}）")
+        print(f"  - PlanningAgent:  优化规划（温度 {PlanningAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化（温度 {OptimizeAgent.TEMPERATURE}）")
         print(f"  - ReportAgent:    总结报告（温度 {ReportAgent.TEMPERATURE}）")
         if llm_service and convergence_engine:
@@ -596,6 +672,20 @@ class ChatAgent:
 
         threading.Thread(target=_bg_split, daemon=True).start()
 
+        # 后台线程生成优化计划（PlanningAgent）
+        def _bg_plan():
+            try:
+                plan = self.planning_agent.generate_plan(assessment_context, resume_text)
+                if plan:
+                    self.session_manager.update_session(session_id, {
+                        "optimization_plan": plan
+                    })
+                    print(f"[Orchestrator] 优化计划已生成并存入 session")
+            except Exception as e:
+                print(f"[Orchestrator] 优化计划生成失败（后台，不影响正常使用）: {e}")
+
+        threading.Thread(target=_bg_plan, daemon=True).start()
+
         # ===== 使用模板开场白（无需 LLM，即时返回） =====
         print(f"[Orchestrator] 使用模板开场白（跳过 DiagnosisAgent LLM 调用）")
         greeting = (
@@ -651,38 +741,60 @@ class ChatAgent:
             "recent_messages": recent_messages,
             "memory_context": memory_context,
             "tool_executor": session.get("tool_executor"),
+            "optimization_plan": session.get("optimization_plan"),
         }
 
-    def _detect_phase_transition(self, user_message: str, current_phase: str) -> str:
+    # 用户确认肯定词
+    CONFIRM_YES = ["好的", "好", "是的", "是", "对", "嗯", "可以", "行", "OK", "ok", "没问题", "总结吧", "做个总结"]
+    # 用户否定词
+    CONFIRM_NO = ["不", "不要", "不用", "继续", "还没", "先不", "再改改", "等等", "算了"]
+
+    def _detect_phase_transition(self, user_message: str, current_phase: str,
+                                  session: dict = None) -> tuple:
         """
-        检测阶段转换
+        检测阶段转换（支持确认机制）
 
         规则：
-        1. optimizing → summary：命中总结关键词且不含继续优化信号
-        2. summary → optimizing：用户在总结后又想继续优化（回退）
-        3. 短消息优先（"谢谢帮我继续改" 含两类关键词时，继续信号优先）
+        1. 如果有 pending_phase_transition="summary" → 检查用户是肯定还是否定
+        2. optimizing → 首次命中总结关键词 → 返回确认提示，不直接切
+        3. summary → optimizing：用户在总结后又想继续优化（回退）
+
+        Returns:
+            (new_phase, confirmation_prompt_or_None)
         """
         msg = user_message.strip()
 
-        # 检测是否有继续优化的意图
+        # ===== 处理待确认的阶段转换 =====
+        pending = session.get("pending_phase_transition") if session else None
+        if pending == "summary":
+            # 检查用户回复是肯定还是否定
+            if any(kw in msg for kw in self.CONFIRM_YES):
+                return ("summary", None)
+            elif any(kw in msg for kw in self.CONFIRM_NO):
+                return ("optimizing", None)
+            # 既不肯定也不否定，当作否定（继续优化）
+            return ("optimizing", None)
+
+        # ===== 正常阶段转换检测 =====
         has_continue = any(kw in msg for kw in self.CONTINUE_KEYWORDS)
         has_summary = any(kw in msg for kw in self.SUMMARY_KEYWORDS)
 
         if current_phase == "optimizing":
-            # 有总结意图且没有继续意图 → 进入总结
+            # 有总结意图且没有继续意图 → 先确认
             if has_summary and not has_continue:
                 # 额外检查：消息太长（>30字）可能只是聊天中偶然提到关键词
                 if len(msg) > 30 and not msg.endswith(("吧", "了", "。")):
-                    return current_phase
-                return "summary"
+                    return (current_phase, None)
+                # 返回确认提示，不直接切换
+                return (current_phase, "看起来你准备结束优化了，需要我帮你做个总结吗？")
 
         elif current_phase == "summary":
             # 总结阶段后用户想继续优化 → 回退
             if has_continue:
                 print(f"[Orchestrator] 用户在总结后继续优化，回退到 optimizing")
-                return "optimizing"
+                return ("optimizing", None)
 
-        return current_phase
+        return (current_phase, None)
 
     def _post_chat_processing(self, session_id: str):
         """
@@ -718,7 +830,25 @@ class ChatAgent:
                 except Exception as e:
                     print(f"[Orchestrator] 历史压缩失败: {e}")
 
-            # 3. 生成跨 session 摘要（每 6 条消息更新一次）
+            # 3. 幻觉检测（检查最后一条 assistant 消息是否含有改写内容）
+            try:
+                messages = session["messages"]
+                if messages and messages[-1].get("role") == "assistant":
+                    last_reply = messages[-1]["content"]
+                    rewrite_markers = ["改写", "优化后", "建议改为", "修改后", "润色后", "EDIT>>>"]
+                    if any(marker in last_reply for marker in rewrite_markers):
+                        resume_text = session.get("resume_text", "")
+                        result = ReflectionChecker.check(
+                            self.client, self.model, resume_text, last_reply
+                        )
+                        if result and result.get("has_hallucination") and result.get("issues"):
+                            self.session_manager.update_session(session_id, {
+                                "hallucination_warning": result["issues"]
+                            })
+            except Exception as e:
+                print(f"[Orchestrator] 幻觉检测失败（非阻塞）: {e}")
+
+            # 4. 生成跨 session 摘要（每 6 条消息更新一次）
             msg_count = session.get("message_count", 0)
             if msg_count >= 4 and msg_count % 6 == 0:
                 try:
@@ -904,8 +1034,21 @@ class ChatAgent:
         # 保存用户消息
         self.session_manager.add_message(session_id, "user", actual_message)
 
-        # 阶段转换检测
-        new_phase = self._detect_phase_transition(actual_message, session["phase"])
+        # 阶段转换检测（带确认机制）
+        new_phase, confirmation_prompt = self._detect_phase_transition(
+            actual_message, session["phase"], session
+        )
+
+        # 清除 pending（无论结果如何）
+        if session.get("pending_phase_transition"):
+            self.session_manager.update_session(session_id, {"pending_phase_transition": None})
+
+        if confirmation_prompt:
+            # 需要用户确认 → 设置 pending，直接返回确认提示
+            self.session_manager.update_session(session_id, {"pending_phase_transition": "summary"})
+            self.session_manager.add_message(session_id, "assistant", confirmation_prompt)
+            return confirmation_prompt
+
         if new_phase != session["phase"]:
             print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
             self.session_manager.update_session(session_id, {"phase": new_phase})
@@ -916,6 +1059,14 @@ class ChatAgent:
 
         # 提取子 Agent 需要的上下文
         ctx = self._get_agent_context(session)
+
+        # ===== 幻觉警告检查 =====
+        hallucination_warning = session.get("hallucination_warning")
+        warning_prefix = ""
+        if hallucination_warning:
+            issues_text = "\n".join(f"  - {issue}" for issue in hallucination_warning)
+            warning_prefix = f"⚠️ 提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
+            self.session_manager.update_session(session_id, {"hallucination_warning": None})
 
         # ===== 路由 =====
         try:
@@ -934,6 +1085,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
 
             elif phase == "optimizing":
@@ -947,6 +1099,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent")
@@ -968,7 +1121,12 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
+
+            # 如果有幻觉警告前缀，拼在回复前面
+            if warning_prefix:
+                reply = warning_prefix + reply
 
             # 保存回复
             self.session_manager.add_message(session_id, "assistant", reply)
@@ -1010,8 +1168,22 @@ class ChatAgent:
         # 保存用户消息（存实际文本，不存前缀）
         self.session_manager.add_message(session_id, "user", actual_message)
 
-        # 阶段转换检测（用实际消息，不含前缀）
-        new_phase = self._detect_phase_transition(actual_message, session["phase"])
+        # 阶段转换检测（带确认机制）
+        new_phase, confirmation_prompt = self._detect_phase_transition(
+            actual_message, session["phase"], session
+        )
+
+        # 清除 pending（无论结果如何）
+        if session.get("pending_phase_transition"):
+            self.session_manager.update_session(session_id, {"pending_phase_transition": None})
+
+        if confirmation_prompt:
+            # 需要用户确认 → 设置 pending，直接返回确认提示
+            self.session_manager.update_session(session_id, {"pending_phase_transition": "summary"})
+            self.session_manager.add_message(session_id, "assistant", confirmation_prompt)
+            yield confirmation_prompt
+            return
+
         if new_phase != session["phase"]:
             print(f"[Orchestrator] 阶段转换: {session['phase']} → {new_phase}")
             self.session_manager.update_session(session_id, {"phase": new_phase})
@@ -1022,6 +1194,14 @@ class ChatAgent:
 
         # 提取子 Agent 需要的上下文
         ctx = self._get_agent_context(session)
+
+        # ===== 幻觉警告检查 =====
+        hallucination_warning = session.get("hallucination_warning")
+        if hallucination_warning:
+            issues_text = "\n".join(f"  - {issue}" for issue in hallucination_warning)
+            warning_text = f"⚠️ 提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
+            yield warning_text
+            self.session_manager.update_session(session_id, {"hallucination_warning": None})
 
         full_reply = ""
 
@@ -1043,6 +1223,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
 
             # ===== 常规阶段路由 =====
@@ -1057,6 +1238,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent（流式）")
@@ -1078,6 +1260,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                    optimization_plan=ctx.get("optimization_plan"),
                 )
 
             # 透传流式输出，同时收集完整回复
