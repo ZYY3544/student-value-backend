@@ -131,15 +131,7 @@ class ToolExecutor:
                 ensure_ascii=False,
             )
 
-        # Bing 无结果 → DuckDuckGo 备选
-        ddg = self._ddg_search(keyword, city)
-        if ddg:
-            return json.dumps(
-                {"keyword": keyword, "city": city, "source": "web_search", "results": ddg[:5]},
-                ensure_ascii=False,
-            )
-
-        # 最终兜底：LLM
+        # Bing 无结果 → LLM 兜底
         print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
         return self._llm_search_fallback(keyword, city)
 
@@ -162,33 +154,6 @@ class ToolExecutor:
         except Exception as e:
             print(f"[ToolExecutor] Bing 搜索失败: {e}")
             return []
-
-    def _ddg_search(self, keyword: str, city: str) -> list:
-        """DuckDuckGo 搜索备选"""
-        try:
-            from duckduckgo_search import DDGS
-        except ImportError:
-            return []
-
-        query = f"{keyword} {city} 校招 实习 招聘"
-        search_results = []
-        try:
-            with DDGS() as ddgs:
-                raw = list(ddgs.text(query, region="cn-zh", max_results=5))
-            keyword_chars = set(keyword)
-            for r in raw:
-                title = r.get("title", "")
-                body = r.get("body", "")
-                match_count = sum(1 for c in keyword_chars if c in title or c in body)
-                if match_count >= len(keyword_chars) * 0.5:
-                    search_results.append({
-                        "title": title,
-                        "link": r.get("href", ""),
-                        "snippet": body,
-                    })
-        except Exception as e:
-            print(f"[ToolExecutor] DuckDuckGo 搜索失败: {e}")
-        return search_results
 
     def _llm_search_fallback(self, keyword: str, city: str) -> str:
         """当搜索引擎结果不可用时，用 LLM 生成岗位市场信息"""
