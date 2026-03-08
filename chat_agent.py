@@ -830,13 +830,21 @@ class ChatAgent:
                 except Exception as e:
                     print(f"[Orchestrator] 历史压缩失败: {e}")
 
-            # 3. 幻觉检测（检查最后一条 assistant 消息是否含有改写内容）
+            # 3. 幻觉检测（仅在 Agent 做了简历段落改写时触发）
             try:
                 messages = session["messages"]
                 if messages and messages[-1].get("role") == "assistant":
                     last_reply = messages[-1]["content"]
-                    rewrite_markers = ["改写", "优化后", "建议改为", "修改后", "润色后", "EDIT>>>"]
-                    if any(marker in last_reply for marker in rewrite_markers):
+
+                    # 改写标记：必须有明确的改写输出格式
+                    rewrite_markers = ["EDIT>>>", "建议改为", "修改后", "润色后"]
+                    has_rewrite = any(marker in last_reply for marker in rewrite_markers)
+
+                    # 排除非改写场景（搜索分析、岗位对比等不应触发）
+                    skip_markers = ["搜索", "联网查询", "岗位信息", "匹配度", "搜一下", "正在获取"]
+                    is_search_reply = any(marker in last_reply for marker in skip_markers)
+
+                    if has_rewrite and not is_search_reply:
                         resume_text = session.get("resume_text", "")
                         result = ReflectionChecker.check(
                             self.client, self.model, resume_text, last_reply
