@@ -29,6 +29,7 @@ python-docx>=1.0.0
 
 # 网页搜索（Function Call 工具调用）
 duckduckgo-search>=7.0.0
+requests>=2.31.0
 
 # Supabase（用户数据持久化）
 supabase>=2.0.0

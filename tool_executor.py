@@ -9,11 +9,14 @@ Function Call 工具执行器 (Tool Executor)
 """
 
 import json
+import os
 import re
 import urllib.request
 import urllib.error
 from html.parser import HTMLParser
 from typing import Optional
+
+import requests
 
 
 class ToolExecutor:
@@ -84,36 +87,98 @@ class ToolExecutor:
 
     def search_jobs(self, keyword: str, city: str = "全国") -> str:
         """
-        使用 duckduckgo_search 搜索招聘信息
+        多源搜索招聘信息：Bing API → DuckDuckGo → LLM 兜底
 
         Args:
             keyword: 搜索关键词（岗位名称）
             city: 城市（默认全国）
 
         Returns:
-            JSON 字符串，包含 top 5 结果
+            JSON 字符串，包含搜索结果
         """
-        try:
-            from duckduckgo_search import DDGS
-        except ImportError:
+        city_text = city if city != "全国" else ""
+        print(f"[ToolExecutor] search_jobs: keyword={keyword}, city={city}")
+
+        # 优先用 Bing 多源搜索
+        queries = [
+            f"{keyword} {city_text} 校招 JD site:zhipin.com OR site:liepin.com",
+            f"{keyword} {city_text} 校招 面经 site:nowcoder.com",
+            f"{keyword} 校招 经验 site:xiaohongshu.com",
+        ]
+
+        all_results = []
+        for q in queries:
+            results = self._bing_search(q, count=3)
+            for r in results:
+                url = r.get("link", "")
+                if "zhipin.com" in url or "liepin.com" in url:
+                    r["source_type"] = "JD"
+                elif "nowcoder.com" in url:
+                    r["source_type"] = "面经"
+                elif "xiaohongshu.com" in url:
+                    r["source_type"] = "求职经验"
+                else:
+                    r["source_type"] = "其他"
+            all_results.extend(results)
+
+        # 去重（按 URL）
+        seen = set()
+        unique = [r for r in all_results if r["link"] not in seen and not seen.add(r["link"])]
+
+        if unique:
             return json.dumps(
-                {"error": "搜索功能暂不可用（duckduckgo-search 未安装）"},
+                {"keyword": keyword, "city": city, "source": "bing_search", "results": unique[:8]},
                 ensure_ascii=False,
             )
 
-        query = f"{keyword} {city} 校招 实习 招聘"
-        print(f"[ToolExecutor] search_jobs: query={query}")
+        # Bing 无结果 → DuckDuckGo 备选
+        ddg = self._ddg_search(keyword, city)
+        if ddg:
+            return json.dumps(
+                {"keyword": keyword, "city": city, "source": "web_search", "results": ddg[:5]},
+                ensure_ascii=False,
+            )
 
+        # 最终兜底：LLM
+        print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
+        return self._llm_search_fallback(keyword, city)
+
+    def _bing_search(self, query: str, count: int = 5) -> list:
+        """调用 Bing Web Search API"""
+        api_key = os.environ.get('BING_SEARCH_API_KEY')
+        if not api_key:
+            return []
+        url = "https://api.bing.microsoft.com/v7.0/search"
+        headers = {"Ocp-Apim-Subscription-Key": api_key}
+        params = {"q": query, "count": count, "mkt": "zh-CN", "textFormat": "Raw"}
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            return [
+                {"title": r["name"], "link": r["url"], "snippet": r.get("snippet", "")}
+                for r in data.get("webPages", {}).get("value", [])
+            ]
+        except Exception as e:
+            print(f"[ToolExecutor] Bing 搜索失败: {e}")
+            return []
+
+    def _ddg_search(self, keyword: str, city: str) -> list:
+        """DuckDuckGo 搜索备选"""
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return []
+
+        query = f"{keyword} {city} 校招 实习 招聘"
         search_results = []
         try:
             with DDGS() as ddgs:
                 raw = list(ddgs.text(query, region="cn-zh", max_results=5))
-            # 过滤明显不相关的结果（检查标题或摘要是否包含关键词的任意字符）
             keyword_chars = set(keyword)
             for r in raw:
                 title = r.get("title", "")
                 body = r.get("body", "")
-                # 标题或摘要中至少包含关键词 50% 以上的字符才算相关
                 match_count = sum(1 for c in keyword_chars if c in title or c in body)
                 if match_count >= len(keyword_chars) * 0.5:
                     search_results.append({
@@ -122,18 +187,8 @@ class ToolExecutor:
                         "snippet": body,
                     })
         except Exception as e:
-            print(f"[ToolExecutor] 搜索引擎调用失败: {e}")
-
-        # 如果搜索结果有效，直接返回
-        if search_results:
-            return json.dumps(
-                {"keyword": keyword, "city": city, "source": "web_search", "results": search_results[:5]},
-                ensure_ascii=False,
-            )
-
-        # 兜底：用 LLM 基于知识生成岗位信息
-        print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
-        return self._llm_search_fallback(keyword, city)
+            print(f"[ToolExecutor] DuckDuckGo 搜索失败: {e}")
+        return search_results
 
     def _llm_search_fallback(self, keyword: str, city: str) -> str:
         """当搜索引擎结果不可用时，用 LLM 生成岗位市场信息"""
