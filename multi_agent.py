@@ -572,10 +572,28 @@ EDIT>>>
         self.model = model
         self.tool_executor = tool_executor
 
-    def _get_tool_status_message(self, tool_calls) -> str:
-        """根据工具类型生成等待提示（让用户知道 Agent 正在做什么）"""
+    def _get_tool_status_message(self, tool_calls, shown_tools: set = None) -> str:
+        """
+        根据工具类型生成等待提示（让用户知道 Agent 正在做什么）
+
+        Args:
+            tool_calls: LLM 返回的 tool_calls 列表
+            shown_tools: 已经展示过状态提示的工具名集合（用于去重）
+
+        Returns:
+            状态提示文本，如果应该跳过则返回空字符串
+        """
+        if shown_tools is None:
+            shown_tools = set()
+
+        messages = []
         for tc in tool_calls:
             name = tc.function.name
+
+            # 同类工具已经提示过，跳过（避免重复搜索提示）
+            if name in shown_tools:
+                continue
+
             try:
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
@@ -585,14 +603,17 @@ EDIT>>>
                 keyword = args.get("keyword", "相关岗位")
                 city = args.get("city", "")
                 city_text = f"在{city}" if city and city != "全国" else ""
-                return f"好的，我来帮你{city_text}搜索一下「{keyword}」相关的岗位信息，正在联网查询中...\n\n"
+                messages.append(f"🔍 正{city_text}搜索「{keyword}」相关岗位，联网查询中...")
             elif name == "re_evaluate_resume":
-                return "收到，我来用优化后的简历重新跑一遍评估，稍等一下...\n\n"
+                messages.append("📊 正在用优化后的简历重新评估，稍等...")
             elif name == "compare_with_jd":
-                return "好的，我来帮你对比一下简历和这个 JD 的匹配度，分析中...\n\n"
+                messages.append("🎯 正在对比简历和 JD 的匹配度，分析中...")
             elif name == "fetch_url":
-                return "正在打开链接获取详细内容...\n\n"
-        return ""
+                messages.append("📄 正在获取岗位详情页内容...")
+
+        if not messages:
+            return ""
+        return "\n".join(messages) + "\n\n"
 
     def _execute_tool_calls(self, tool_calls, messages: list) -> list:
         """
@@ -680,6 +701,7 @@ EDIT>>>
 
             if has_tools:
                 # 阶段 1：非流式调用，检测是否触发工具
+                shown_tools = set()  # 跟踪已展示过状态提示的工具类型，避免重复
                 for round_idx in range(self.MAX_TOOL_ROUNDS):
                     response = self.client.chat.completions.create(
                         model=self.model,
@@ -693,9 +715,12 @@ EDIT>>>
                     if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
                         # 有工具调用 → 先输出状态提示，再执行
                         print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用")
-                        status_msg = self._get_tool_status_message(choice.message.tool_calls)
+                        status_msg = self._get_tool_status_message(choice.message.tool_calls, shown_tools)
                         if status_msg:
                             yield status_msg
+                        # 记录已展示的工具类型
+                        for tc in choice.message.tool_calls:
+                            shown_tools.add(tc.function.name)
                         messages = self._execute_tool_calls(choice.message.tool_calls, messages)
                         continue
                     else:
