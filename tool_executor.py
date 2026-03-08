@@ -155,7 +155,10 @@ class ToolExecutor:
     "market_insight": "1-2句话概括该岗位在该城市的市场情况"
 }}
 
-要求：列出 3-5 个典型岗位，信息要基于真实市场情况，不要编造不存在的公司。"""
+要求：
+- 列出 3-5 个典型岗位，信息要基于真实市场情况，不要编造不存在的公司
+- 绝对不要生成任何 URL 链接（不要编造 link、href、url 字段）
+- 只输出上面格式中的字段，不要添加额外字段"""
 
         try:
             response = self.llm_service.client.chat.completions.create(
@@ -168,9 +171,14 @@ class ToolExecutor:
                 response_format={"type": "json_object"},
             )
             result = json.loads(response.choices[0].message.content.strip())
+            # 移除 LLM 可能编造的链接字段
+            for item in result.get("results", []):
+                for link_key in ("link", "href", "url"):
+                    item.pop(link_key, None)
             result["keyword"] = keyword
             result["city"] = city
             result["source"] = "llm_knowledge"
+            result["note"] = "以上信息基于AI知识库整理，非实时搜索结果，建议去招聘网站确认最新情况"
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             print(f"[ToolExecutor] LLM 兜底搜索失败: {e}")

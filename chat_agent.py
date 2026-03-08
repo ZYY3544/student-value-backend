@@ -154,6 +154,7 @@ class SessionManager:
             "optimization_plan": None,  # PlanningAgent 生成的优化计划
             "pending_phase_transition": None,  # 待确认的阶段转换（如 "summary"）
             "hallucination_warning": None,  # 幻觉检测警告
+            "reeval_suggested": False,  # 是否已建议过重评估
         }
 
         with self._lock:
@@ -890,6 +891,27 @@ class ChatAgent:
             return m.group(1), m.group(2).strip() or '开始吧'
         return None, user_message
 
+    def _check_reeval_suggestion(self, session: dict) -> Optional[str]:
+        """
+        检查是否应该建议用户重评估
+
+        条件：已优化 >= 2 个段落 且 尚未建议过
+        Returns:
+            建议提示文本，或 None
+        """
+        if session.get("reeval_suggested"):
+            return None
+        memory: ConversationMemory = session["memory"]
+        if len(memory.optimized_sections) >= 2:
+            return (
+                "💡 你已经优化了 {n} 个段落（{sections}），要不要我帮你重新跑一遍评估，"
+                "看看能力评分和薪酬定位有什么变化？"
+            ).format(
+                n=len(memory.optimized_sections),
+                sections="、".join(memory.optimized_sections[:3]),
+            )
+        return None
+
     def _build_report_analysis_prompt(self, session: dict) -> str:
         """构建深度报告解读的 System Prompt（复用小程序 AI 深度分析）"""
         ctx = session["assessment_context"]
@@ -1136,6 +1158,12 @@ class ChatAgent:
             if warning_prefix:
                 reply = warning_prefix + reply
 
+            # 程序化重评估建议（改完 N 段后自动追加）
+            reeval_hint = self._check_reeval_suggestion(session)
+            if reeval_hint and phase == "optimizing":
+                reply = reply + "\n\n---\n\n" + reeval_hint
+                self.session_manager.update_session(session_id, {"reeval_suggested": True})
+
             # 保存回复
             self.session_manager.add_message(session_id, "assistant", reply)
 
@@ -1275,6 +1303,14 @@ class ChatAgent:
             for chunk in stream:
                 full_reply += chunk
                 yield chunk
+
+            # 程序化重评估建议（改完 N 段后自动追加）
+            reeval_hint = self._check_reeval_suggestion(session)
+            if reeval_hint and phase == "optimizing":
+                reeval_block = "\n\n---\n\n" + reeval_hint
+                full_reply += reeval_block
+                yield reeval_block
+                self.session_manager.update_session(session_id, {"reeval_suggested": True})
 
             # 保存完整回复
             if full_reply:
