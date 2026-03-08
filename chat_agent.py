@@ -223,6 +223,46 @@ class SessionManager:
                 print(f"[Supabase] chat_sessions 持久化失败: {e}")
         threading.Thread(target=_do, daemon=True).start()
 
+    def save_session_summary(self, session_id: str, summary: str):
+        """将会话摘要保存到 Supabase"""
+        if not _supabase_client:
+            return
+        def _do():
+            try:
+                _supabase_client.table('chat_sessions').update({
+                    'summary': summary,
+                }).eq('id', session_id).execute()
+                print(f"[Supabase] 会话摘要已保存: {session_id[:8]}")
+            except Exception as e:
+                print(f"[Supabase] 会话摘要保存失败: {e}")
+        threading.Thread(target=_do, daemon=True).start()
+
+    @staticmethod
+    def load_cross_session_memory(user_id: str) -> str:
+        """从 Supabase 加载用户最近 5 次有摘要的会话，拼成跨 session 记忆"""
+        if not _supabase_client or not user_id:
+            return ""
+        try:
+            resp = _supabase_client.table('chat_sessions') \
+                .select('summary, created_at') \
+                .eq('user_id', user_id) \
+                .not_.is_('summary', 'null') \
+                .order('created_at', desc=True) \
+                .limit(5) \
+                .execute()
+            if not resp.data:
+                return ""
+            parts = []
+            for row in reversed(resp.data):  # 按时间正序
+                date_str = row['created_at'][:10] if row.get('created_at') else '未知日期'
+                parts.append(f"[{date_str}] {row['summary']}")
+            memory_text = "\n\n".join(parts)
+            print(f"[Supabase] 加载了 {len(resp.data)} 条跨会话记忆")
+            return memory_text
+        except Exception as e:
+            print(f"[Supabase] 加载跨会话记忆失败: {e}")
+            return ""
+
     def _persist_message_to_supabase(self, session_id: str, role: str, content: str):
         """异步将聊天消息写入 Supabase（非阻塞）"""
         if not _supabase_client:
@@ -536,6 +576,14 @@ class ChatAgent:
                 "tool_executor": tool_executor,
             })
 
+        # 加载跨 session 记忆（让 Agent "记住"之前的对话）
+        cross_session_memory = SessionManager.load_cross_session_memory(user_id)
+        if cross_session_memory:
+            self.session_manager.update_session(session_id, {
+                "cross_session_memory": cross_session_memory,
+            })
+            print(f"[Orchestrator] 已注入跨会话记忆")
+
         # 后台线程拆分简历（真正不阻塞开场）
         def _bg_split():
             try:
@@ -580,10 +628,13 @@ class ChatAgent:
         messages = session["messages"]
         compressed = session.get("compressed_history", "")
 
-        # 构建对话摘要：压缩历史 + 结构化记忆
+        # 构建对话摘要：跨 session 记忆 + 压缩历史
+        cross_memory = session.get("cross_session_memory", "")
         conversation_summary = ""
+        if cross_memory:
+            conversation_summary = f"【历史对话记忆（之前的会话）】\n{cross_memory}\n\n"
         if compressed:
-            conversation_summary = compressed
+            conversation_summary += compressed
 
         # 结构化记忆
         memory_context = memory.to_context_string() if memory.has_content() else ""
@@ -666,6 +717,30 @@ class ChatAgent:
                     print(f"[Orchestrator] 会话 {session_id[:8]} 历史已压缩，保留最近 {len(recent_messages)} 条消息")
                 except Exception as e:
                     print(f"[Orchestrator] 历史压缩失败: {e}")
+
+            # 3. 生成跨 session 摘要（每 6 条消息更新一次）
+            msg_count = session.get("message_count", 0)
+            if msg_count >= 4 and msg_count % 6 == 0:
+                try:
+                    messages = session["messages"]
+                    conv_text = "\n".join(
+                        f"{'用户' if m['role']=='user' else '顾问'}: {m['content'][:200]}"
+                        for m in messages[-10:]
+                    )
+                    summary_prompt = """请用2-3句话概括以下对话的要点，包括：用户关心什么、给了什么建议、达成了什么共识。
+要求简洁，100字以内。"""
+                    resp = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": summary_prompt},
+                            {"role": "user", "content": conv_text},
+                        ],
+                        temperature=0.0,
+                    )
+                    summary = resp.choices[0].message.content.strip()
+                    self.session_manager.save_session_summary(session_id, summary)
+                except Exception as e:
+                    print(f"[Orchestrator] 会话摘要生成失败: {e}")
 
         threading.Thread(target=_bg_process, daemon=True).start()
 
