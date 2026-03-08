@@ -9,6 +9,10 @@ Function Call 工具执行器 (Tool Executor)
 """
 
 import json
+import re
+import urllib.request
+import urllib.error
+from html.parser import HTMLParser
 from typing import Optional
 
 
@@ -57,6 +61,10 @@ class ToolExecutor:
             elif tool_name == "compare_with_jd":
                 return self.compare_with_jd(
                     jd_text=arguments.get("jd_text", ""),
+                )
+            elif tool_name == "fetch_url":
+                return self.fetch_url(
+                    url=arguments.get("url", ""),
                 )
             else:
                 return json.dumps(
@@ -391,3 +399,120 @@ class ToolExecutor:
                 {"error": f"JD 对比分析失败: {str(e)}"},
                 ensure_ascii=False,
             )
+
+    # --------------------------------------------------
+    # 工具 4: 抓取网页内容
+    # --------------------------------------------------
+
+    def fetch_url(self, url: str) -> str:
+        """
+        抓取指定 URL 的网页内容，提取正文文本
+
+        用于获取搜索结果中的 JD 全文，让 Agent 做精准分析。
+        使用标准库实现，不依赖 requests/bs4。
+
+        Args:
+            url: 目标网页 URL
+
+        Returns:
+            JSON 字符串，包含提取的正文文本
+        """
+        if not url:
+            return json.dumps({"error": "URL 不能为空"}, ensure_ascii=False)
+
+        print(f"[ToolExecutor] fetch_url: {url}")
+
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                # 处理编码
+                charset = resp.headers.get_content_charset() or "utf-8"
+                html = resp.read().decode(charset, errors="replace")
+
+            # 提取正文
+            text = self._html_to_text(html)
+
+            # 截断过长内容（保留前 4000 字符，足够覆盖一份 JD）
+            if len(text) > 4000:
+                text = text[:4000] + "\n...(内容过长，已截断)"
+
+            if len(text.strip()) < 50:
+                return json.dumps(
+                    {"url": url, "error": "页面内容过少，可能需要登录或页面加载依赖 JavaScript"},
+                    ensure_ascii=False,
+                )
+
+            return json.dumps(
+                {"url": url, "content": text, "length": len(text)},
+                ensure_ascii=False,
+            )
+
+        except urllib.error.HTTPError as e:
+            print(f"[ToolExecutor] fetch_url HTTP 错误: {e.code}")
+            return json.dumps(
+                {"url": url, "error": f"HTTP {e.code}，页面无法访问"},
+                ensure_ascii=False,
+            )
+        except urllib.error.URLError as e:
+            print(f"[ToolExecutor] fetch_url URL 错误: {e.reason}")
+            return json.dumps(
+                {"url": url, "error": f"网络错误: {e.reason}"},
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            print(f"[ToolExecutor] fetch_url 失败: {e}")
+            return json.dumps(
+                {"url": url, "error": f"抓取失败: {str(e)}"},
+                ensure_ascii=False,
+            )
+
+    @staticmethod
+    def _html_to_text(html: str) -> str:
+        """
+        将 HTML 转为纯文本（标准库实现，无需 bs4）
+
+        策略：
+        1. 移除 script/style 标签及其内容
+        2. 用 HTMLParser 提取文本
+        3. 清理多余空白
+        """
+        # 移除 script 和 style 块
+        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
+
+        # 用 HTMLParser 提取文本
+        class _TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.parts = []
+                self._skip = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ('script', 'style', 'noscript'):
+                    self._skip = True
+                elif tag in ('br', 'p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr'):
+                    self.parts.append('\n')
+
+            def handle_endtag(self, tag):
+                if tag in ('script', 'style', 'noscript'):
+                    self._skip = False
+
+            def handle_data(self, data):
+                if not self._skip:
+                    self.parts.append(data)
+
+        extractor = _TextExtractor()
+        extractor.feed(html)
+        text = ''.join(extractor.parts)
+
+        # 清理多余空白：多个连续空行合并为一个
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        text = re.sub(r' +', ' ', text)
+        return text.strip()
