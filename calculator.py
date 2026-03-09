@@ -78,9 +78,6 @@ class HayCalculator:
         # 有+号且没有被-号抵消
         if plus_count >= 1 and minus_count == 0:
             return 1
-        # 两个+（即使不可能，为了完整性）
-        elif plus_count == 2:
-            return 1
         # 其他情况（包括一个+一个-抵消，或全是-，或全是N）
         else:
             return 0

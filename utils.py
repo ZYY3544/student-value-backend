@@ -6,8 +6,6 @@
 提取重复使用的工具函数，提高代码复用性
 """
 
-from typing import List
-import time
 from contextlib import contextmanager
 import os
 
@@ -139,65 +137,6 @@ def calculate_acc_symbol_adjustment(freedom: str, magnitude: str, nature: str) -
 
 
 # ===========================================
-# 重试策略（指数退避）
-# ===========================================
-
-def exponential_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 60.0) -> float:
-    """
-    计算指数退避延迟时间
-
-    Args:
-        attempt: 当前重试次数（从0开始）
-        base_delay: 基础延迟时间（秒）
-        max_delay: 最大延迟时间（秒）
-
-    Returns:
-        延迟时间（秒）
-    """
-    delay = base_delay * (2 ** attempt)
-    return min(delay, max_delay)
-
-
-def retry_with_backoff(
-    func,
-    max_retries: int = 3,
-    base_delay: float = 1.0,
-    exceptions: tuple = (Exception,),
-    logger=None
-):
-    """
-    使用指数退避策略重试函数
-
-    Args:
-        func: 要重试的函数
-        max_retries: 最大重试次数
-        base_delay: 基础延迟时间
-        exceptions: 需要捕获的异常类型
-        logger: 日志记录器
-
-    Returns:
-        函数执行结果
-
-    Raises:
-        最后一次异常
-    """
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except exceptions as e:
-            if attempt == max_retries - 1:
-                # 最后一次重试，抛出异常
-                if logger:
-                    logger.error(f"重试失败，已达最大次数 {max_retries}: {e}")
-                raise
-
-            delay = exponential_backoff(attempt, base_delay)
-            if logger:
-                logger.warning(f"重试 {attempt + 1}/{max_retries}，{delay:.1f}秒后继续: {e}")
-            time.sleep(delay)
-
-
-# ===========================================
 # 环境变量管理
 # ===========================================
 
@@ -237,38 +176,3 @@ def temporary_env_vars(env_vars: dict):
                 os.environ[key] = original_value
 
 
-# ===========================================
-# 字符串处理
-# ===========================================
-
-def safe_percentage_parse(percentage_str: str) -> float:
-    """
-    安全解析百分比字符串为浮点数
-
-    Args:
-        percentage_str: 百分比字符串，如 "100%", " 87% "
-
-    Returns:
-        浮点数，如 1.0, 0.87
-    """
-    cleaned = percentage_str.strip().rstrip('%').strip()
-    try:
-        return float(cleaned) / 100.0
-    except ValueError:
-        return 0.0
-
-
-def is_percentage_match(percentage_str: str, target_value: float, tolerance: float = 0.01) -> bool:
-    """
-    比较百分比字符串与目标值是否匹配
-
-    Args:
-        percentage_str: 百分比字符串
-        target_value: 目标值（0-1之间）
-        tolerance: 容差
-
-    Returns:
-        是否匹配
-    """
-    actual = safe_percentage_parse(percentage_str)
-    return abs(actual - target_value) < tolerance

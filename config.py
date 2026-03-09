@@ -161,7 +161,7 @@ class Config:
     @property
     def API_DEBUG(self) -> bool:
         """是否开启调试模式"""
-        return True  # 临时启用调试模式以查看错误
+        return os.getenv('API_DEBUG', 'false').lower() in ('true', '1', 'yes')
 
     # ===========================================
     # LLM 服务配置
