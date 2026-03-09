@@ -775,18 +775,18 @@ class ChatAgent:
         # 个性化建议（基于评测数据）
         personalized_tip = ""
         if strongest and job_title:
-            personalized_tip = f"\n\n💡 从评测来看，你的**{strongest}**很突出，我们可以重点在简历中强化这个优势，让它跟**{job_title}**的要求精准匹配。"
+            personalized_tip = f"\n\n从评测来看，你的**{strongest}**很突出，我们可以重点在简历中强化这个优势，让它跟**{job_title}**的要求精准匹配。"
         elif job_title:
-            personalized_tip = f"\n\n💡 你的目标是**{job_title}**方向，我可以帮你搜一下这个方向的岗位要求，然后针对性地改简历。"
+            personalized_tip = f"\n\n你的目标是**{job_title}**方向，我可以帮你搜一下这个方向的岗位要求，然后针对性地改简历。"
 
         greeting = (
-            "Hello，我是你的专属求职伙伴小铭，我已经仔细看过你的评测结果和简历内容啦，接下来我可以帮你做这些事情：\n\n"
-            "📝 **简历优化**：让简历内容更清晰、亮点更突出\n\n"
-            "🎯 **JD 定制改写**：给我一个 JD，我直接帮你把简历改成匹配版\n\n"
-            "🔍 **岗位搜索**：搜索市场岗位，帮你识别真假信息\n\n"
-            "📊 **多岗位对比**：同时对比多个岗位，看哪个最适合你\n\n"
-            "📁 **多版本管理**：针对不同公司维护不同版本简历\n\n"
-            "🧭 **方向探索**：如果你还不确定方向，我帮你一起想"
+            "Hello，我是你的专属求职伙伴 Sparky，我已经仔细看过你的评测结果和简历内容啦，接下来我可以帮你做这些事情：\n\n"
+            "1. **简历优化** - 让简历内容更清晰、亮点更突出\n\n"
+            "2. **JD 定制改写** - 给我一个 JD，我直接帮你把简历改成匹配版\n\n"
+            "3. **岗位搜索** - 搜索市场岗位，帮你识别真假信息\n\n"
+            "4. **多岗位对比** - 同时对比多个岗位，看哪个最适合你\n\n"
+            "5. **多版本管理** - 针对不同公司维护不同版本简历\n\n"
+            "6. **方向探索** - 如果你还不确定方向，我帮你一起想"
             f"{personalized_tip}\n\n"
             "你想先试试哪一项？"
         )
@@ -998,7 +998,7 @@ class ChatAgent:
         memory: ConversationMemory = session["memory"]
         if len(memory.optimized_sections) >= 2:
             return (
-                "💡 你已经优化了 {n} 个段落（{sections}），要不要我帮你重新跑一遍评估，"
+                "你已经优化了 {n} 个段落（{sections}），要不要我帮你重新跑一遍评估，"
                 "看看能力评分和薪酬定位有什么变化？"
             ).format(
                 n=len(memory.optimized_sections),
@@ -1020,7 +1020,7 @@ class ChatAgent:
 
         if len(memory.optimized_sections) >= 1 and job_title:
             return (
-                f"💡 对了，你的目标是**{job_title}**方向——要不要发一个你感兴趣的 JD 给我？"
+                f"对了，你的目标是**{job_title}**方向——要不要发一个你感兴趣的 JD 给我？"
                 f"我可以直接帮你把简历按 JD 的要求定制化改写，一步到位！"
             )
         return None
@@ -1085,22 +1085,22 @@ class ChatAgent:
 
 ### 分析要点（按以下顺序输出4个段落）：
 
-**第一段：以"📊 岗位匹配总结"开头（加粗），另起一行写正文**（3-4句话）
+**第一段：以"岗位匹配总结"开头（加粗），另起一行写正文**（3-4句话）
 - 正文开头必须是："你的月薪估值定位在 {salary_range}，"
 - 说明你的背景和{job_title}这个岗位的匹配情况
 - 从赛道适配性的角度，说明你的经历在这个方向上处于什么位置
 
-**第二段：以"💪 你的核心亮点"开头（加粗），另起一行写正文**（5-6句话）
+**第二段：以"你的核心亮点"开头（加粗），另起一行写正文**（5-6句话）
 - 从简历中提取 2-3 个最亮眼的经历（引用原文）
 - 用自然语言说明这些经历为什么和目标岗位高度匹配
 - 解释这些经历体现了什么能力，为什么在这个赛道上有优势
 
-**第三段：以"📈 可以加强的方向"开头（加粗），另起一行写正文**（4-5句话）
+**第三段：以"可以加强的方向"开头（加粗），另起一行写正文**（4-5句话）
 - 基于目标岗位的要求，指出哪些方面如果加强，匹配度会更高
 - 给出 1-2 个具体的努力方向
 - 语气要鼓励而非批评，是"提升空间"而非"缺点"
 
-**第四段：以"🎤 面试中你可以这样讲"开头（加粗），另起一行写正文**（3-4句话）
+**第四段：以"面试中你可以这样讲"开头（加粗），另起一行写正文**（3-4句话）
 - 面试时可以重点讲的 1-2 个故事/经历
 - 具体怎么讲才能突出你和这个岗位的匹配度
 - 可能被追问的问题，以及如何巧妙回应
@@ -1200,7 +1200,7 @@ class ChatAgent:
         warning_prefix = ""
         if hallucination_warning:
             issues_text = "\n".join(f"  - {issue}" for issue in hallucination_warning)
-            warning_prefix = f"⚠️ 提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
+            warning_prefix = f"提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
             self.session_manager.update_session(session_id, {"hallucination_warning": None})
 
         # ===== 路由 =====
@@ -1346,7 +1346,7 @@ class ChatAgent:
         hallucination_warning = session.get("hallucination_warning")
         if hallucination_warning:
             issues_text = "\n".join(f"  - {issue}" for issue in hallucination_warning)
-            warning_text = f"⚠️ 提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
+            warning_text = f"提醒：上次改写中可能包含原文中没有的信息，请注意核实：\n{issues_text}\n\n"
             yield warning_text
             self.session_manager.update_session(session_id, {"hallucination_warning": None})
 
