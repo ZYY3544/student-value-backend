@@ -925,6 +925,7 @@ EDIT>>>
             if has_tools:
                 # 阶段 1：非流式调用，检测是否触发工具
                 shown_tools = set()  # 跟踪已展示过状态提示的工具类型，避免重复
+                tool_was_called = False  # 是否执行过工具
                 for round_idx in range(self.MAX_TOOL_ROUNDS):
                     response = self.client.chat.completions.create(
                         model=self.model,
@@ -945,18 +946,25 @@ EDIT>>>
                         for tc in choice.message.tool_calls:
                             shown_tools.add(tc.function.name)
                         messages = self._execute_tool_calls(choice.message.tool_calls, messages)
+                        tool_was_called = True
+                        # 工具执行完毕，给用户一个中间提示
+                        yield "\n\n正在整理结果...\n\n"
                         continue
                     else:
-                        # 无工具调用 → 直接输出本次结果的文本内容
-                        content = choice.message.content or ""
-                        if content:
-                            yield content
-                        return
+                        if not tool_was_called:
+                            # 首轮就没有工具调用 → 直接输出本次结果的文本内容
+                            content = choice.message.content or ""
+                            if content:
+                                yield content
+                            return
+                        else:
+                            # 工具执行完后的最终回复 → 改用流式输出，避免长时间无响应
+                            break
 
-                # 超过最大轮次，做最后一次流式调用（不带 tools，强制文本输出）
-                print(f"[OptimizeAgent] 达到最大工具调用轮次，强制文本输出")
+                # 工具循环结束或超过最大轮次 → 流式输出最终回复
+                print(f"[OptimizeAgent] 工具调用完成，流式输出最终回复")
 
-            # 阶段 2（无工具 或 工具循环后）：流式输出
+            # 阶段 2（无工具 / 工具循环后 / 超过最大轮次）：流式输出
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
