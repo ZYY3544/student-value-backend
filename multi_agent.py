@@ -936,17 +936,19 @@ EDIT>>>
                     choice = response.choices[0]
 
                     if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
-                        # 有工具调用 → 先输出状态提示，再执行
+                        # 有工具调用 → 先逐字输出状态提示，再执行
                         print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用")
                         status_msg = self._get_tool_status_message(choice.message.tool_calls, shown_tools)
                         if status_msg:
-                            yield status_msg
+                            for ch in status_msg:
+                                yield ch
                         # 记录已展示的工具类型
                         for tc in choice.message.tool_calls:
                             shown_tools.add(tc.function.name)
                         messages = self._execute_tool_calls(choice.message.tool_calls, messages)
-                        # 工具执行完毕，给用户一个中间提示
-                        yield "\n\n正在整理结果...\n\n"
+                        # 工具执行完毕，逐字输出中间提示
+                        for ch in "\n\n正在整理结果...\n\n":
+                            yield ch
                         continue
                     else:
                         # 没有工具调用 → break 进入流式输出
