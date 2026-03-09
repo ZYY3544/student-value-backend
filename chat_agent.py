@@ -710,9 +710,12 @@ class ChatAgent:
             if user_id:
                 saved_versions = SessionManager.load_resume_versions(user_id)
                 for v in saved_versions:
-                    tool_executor._resume_versions[v['version_id']] = {
-                        "label": v['label'],
-                        "resume_text": v['resume_text'],
+                    vid = v.get('version_id')
+                    if not vid:
+                        continue
+                    tool_executor._resume_versions[vid] = {
+                        "label": v.get('label', ''),
+                        "resume_text": v.get('resume_text', ''),
                         "target_jd": v.get('target_jd', ''),
                         "created_at": 0,
                     }

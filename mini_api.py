@@ -561,7 +561,7 @@ def verify_invite():
     成功: { "success": true }
     失败: { "success": false, "error": "..." }
     """
-    data = request.get_json()
+    data = request.get_json() or {}
     code = (data.get('inviteCode') or '').strip().upper()
 
     if not code:
@@ -1020,7 +1020,7 @@ VALID_DURATION_COLS = {'result_s', 'mine_s'}
 @app.route('/api/mini/update-duration', methods=['POST'])
 def update_duration():
     """回写评估后页面的停留时长到 assessment_logs"""
-    data = request.get_json()
+    data = request.get_json() or {}
     log_id = data.get('logId')
     col = data.get('column')  # result_s / mine_s
     duration_s = data.get('durationS')
