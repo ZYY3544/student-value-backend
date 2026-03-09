@@ -314,9 +314,9 @@ class ToolExecutor:
             if job_grade < 9:
                 job_grade = 9
 
-            # 5 能力映射
-            from ability_mapper import map_hay_to_5_abilities
-            abilities = map_hay_to_5_abilities(factors)
+            # 8 能力维度映射
+            from ability_mapper import map_factors_to_dimensions
+            abilities = map_factors_to_dimensions(factors)
 
             # 构建结果
             new_result = {

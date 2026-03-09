@@ -1031,22 +1031,18 @@ class ChatAgent:
         resume_text = session["resume_text"]
 
         abilities = ctx.get("abilities", {})
-        def get_ability(name: str) -> Tuple[float, str]:
-            info = abilities.get(name, {})
-            score = info.get("score", 50) / 10
-            explanation = info.get("explanation", "暂无数据")
-            return score, explanation
-
-        pro_score, pro_exp = get_ability("专业力")
-        mgmt_score, mgmt_exp = get_ability("管理力")
-        collab_score, collab_exp = get_ability("合作力")
-        think_score, think_exp = get_ability("思辨力")
-        innov_score, innov_exp = get_ability("创新力")
-
         text_preview = resume_text[:2000]
         salary_range = ctx.get("salaryRange", "未知")
         city = ctx.get("city", "未知")
         job_title = ctx.get("jobTitle", "未知")
+
+        # 构建8维能力得分文本
+        abilities_lines = []
+        for name, info in abilities.items():
+            score_10 = info.get("score", 50) / 10  # 百分制转十分制
+            explanation = info.get("explanation", "暂无数据")
+            abilities_lines.append(f"  - {name}：{score_10:.1f}分 - {explanation}")
+        abilities_text = "\n".join(abilities_lines)
 
         return f"""你是一位资深的职业价值评估专家和薪酬谈判顾问，拥有丰富的人力资源和猎头经验。
 
@@ -1079,12 +1075,8 @@ class ChatAgent:
 - 预计月薪估值区间：{salary_range}
 - 学历：{ctx.get('educationLevel', '未知')} | 专业：{ctx.get('major', '未知')}
 - 意向行业：{ctx.get('industry', '未知')} | 企业性质：{ctx.get('companyType', '未知')}
-- 五维能力得分（满分10分）：
-  - 专业力：{pro_score:.1f}分 - {pro_exp}
-  - 管理力：{mgmt_score:.1f}分 - {mgmt_exp}
-  - 合作力：{collab_score:.1f}分 - {collab_exp}
-  - 思辨力：{think_score:.1f}分 - {think_exp}
-  - 创新力：{innov_score:.1f}分 - {innov_exp}
+- 8维能力得分（满分10分）：
+{abilities_text}
 
 ## 原始简历内容
 {text_preview}
@@ -1123,7 +1115,7 @@ class ChatAgent:
 6. **禁止**：
    - 除了关键词高亮外，不要使用其他 markdown 标记、序号或 bullet points
    - 不要提及"职级"、"等级"、"level"、具体分数
-   - 不要用"专业力""管理力"等术语，用日常语言描述能力
+   - 用日常语言描述能力，不要照搬维度名称
    - 不要泛泛而谈，每句话都要有具体依据
    - 直接输出正文，不要有开场问候语"""
 

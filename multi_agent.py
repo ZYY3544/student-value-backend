@@ -299,14 +299,14 @@ class DiagnosisAgent:
         job_function = ctx.get("jobFunction", "未知")
 
         factor_names = {
-            "practical_knowledge": "专业知识(PK)",
-            "managerial_knowledge": "管理知识(MK)",
-            "communication": "沟通技巧(Comm)",
-            "thinking_environment": "思维环境(TE)",
-            "thinking_challenge": "思维挑战(TC)",
-            "freedom_to_act": "行动自由(FTA)",
-            "magnitude": "影响范围(M)",
-            "nature_of_impact": "影响性质(NI)",
+            "practical_knowledge": "知识深度",
+            "managerial_knowledge": "统筹能力",
+            "communication": "沟通影响",
+            "thinking_environment": "问题复杂度",
+            "thinking_challenge": "创新思维",
+            "freedom_to_act": "决策自主性",
+            "magnitude": "影响规模",
+            "nature_of_impact": "贡献类型",
         }
 
         factors_text = "\n".join(
@@ -340,10 +340,10 @@ class DiagnosisAgent:
 - 评估职级: {grade}
 - 薪酬区间: {salary}
 
-HAY 8因素档位:
+8维能力档位:
 {factors_text}
 
-5维能力得分:
+8维能力得分:
 {abilities_text}
 
 能力分析提示:
@@ -471,14 +471,14 @@ class PlanningAgent:
         abilities = ctx.get("abilities", {})
 
         factor_names = {
-            "practical_knowledge": "专业知识(PK)",
-            "managerial_knowledge": "管理知识(MK)",
-            "communication": "沟通技巧(Comm)",
-            "thinking_environment": "思维环境(TE)",
-            "thinking_challenge": "思维挑战(TC)",
-            "freedom_to_act": "行动自由(FTA)",
-            "magnitude": "影响范围(M)",
-            "nature_of_impact": "影响性质(NI)",
+            "practical_knowledge": "知识深度",
+            "managerial_knowledge": "统筹能力",
+            "communication": "沟通影响",
+            "thinking_environment": "问题复杂度",
+            "thinking_challenge": "创新思维",
+            "freedom_to_act": "决策自主性",
+            "magnitude": "影响规模",
+            "nature_of_impact": "贡献类型",
         }
 
         factors_text = "\n".join(
@@ -510,10 +510,10 @@ class PlanningAgent:
 - 评估职级: {ctx.get('grade', '未知')}
 - 薪酬区间: {ctx.get('salaryRange', '未知')}
 
-HAY 8因素档位:
+8维能力档位:
 {factors_text}
 
-5维能力得分:
+8维能力得分:
 {abilities_text}
 
 能力分析:
@@ -1087,14 +1087,14 @@ EDIT>>>
         abilities = ctx.get("abilities", {})
 
         factor_names = {
-            "practical_knowledge": "专业知识(PK)",
-            "managerial_knowledge": "管理知识(MK)",
-            "communication": "沟通技巧(Comm)",
-            "thinking_environment": "思维环境(TE)",
-            "thinking_challenge": "思维挑战(TC)",
-            "freedom_to_act": "行动自由(FTA)",
-            "magnitude": "影响范围(M)",
-            "nature_of_impact": "影响性质(NI)",
+            "practical_knowledge": "知识深度",
+            "managerial_knowledge": "统筹能力",
+            "communication": "沟通影响",
+            "thinking_environment": "问题复杂度",
+            "thinking_challenge": "创新思维",
+            "freedom_to_act": "决策自主性",
+            "magnitude": "影响规模",
+            "nature_of_impact": "贡献类型",
         }
 
         factors_text = "\n".join(
@@ -1121,10 +1121,10 @@ EDIT>>>
 目标岗位: {ctx.get('jobTitle', '未知')} | 职能: {ctx.get('jobFunction', '未知')}
 职级: {ctx.get('grade', '未知')} | 薪酬: {ctx.get('salaryRange', '未知')}
 
-HAY 8因素:
+8维能力档位:
 {factors_text}
 
-5维能力:
+8维能力:
 {abilities_text}
 </assessment>""")
 

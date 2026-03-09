@@ -16,7 +16,7 @@ from chat_agent import ChatAgent
 from incremental_convergence import IncrementalConvergence
 from validation_rules import validation_rules
 from salary_calculator import SalaryCalculator
-from ability_mapper import map_hay_to_5_abilities, get_ability_radar_data, get_ability_summary
+from ability_mapper import map_factors_to_dimensions, get_dimension_radar_data, get_dimension_summary
 from calculator import calculate_hay_evaluation
 from level_tags import get_level_tag_and_desc
 from salary_competitiveness import calculate_salary_competitiveness
@@ -775,11 +775,11 @@ def assess():
         salary_range = format_salary_k(adj_low, adj_high)
         print(f"[学生版] 薪酬: 基础{base_low:.0f}-{base_high:.0f}万/年 × {school_tier}/{education_level} → 月{salary_range}")
 
-        # 5. 8因素 → 5能力映射
+        # 5. 8因素 → 8能力维度映射
         print("[步骤4] 能力映射...")
-        abilities = map_hay_to_5_abilities(factors)
-        radar_data = get_ability_radar_data(abilities)
-        ability_summary = get_ability_summary(abilities)
+        abilities = map_factors_to_dimensions(factors)
+        radar_data = get_dimension_radar_data(abilities)
+        ability_summary = get_dimension_summary(abilities)
 
         # 6. 生成趣味标签（学生版：传入 total_score 用于子档判定）
         print("[步骤5] 生成趣味标签...")
@@ -815,37 +815,9 @@ def assess():
         print(f"    - M   影响范围:     {factors['magnitude']}")
         print(f"    - NI  影响性质:     {factors['nature_of_impact']}")
         print("-" * 60)
-        print("【8因素 → 5能力 映射计算】")
-
-        # 导入分数映射表用于显示计算过程
-        from ability_mapper import (PK_SCORE_MAP, MK_SCORE_MAP, COMM_SCORE_MAP,
-                                    TE_SCORE_MAP, TC_SCORE_MAP, FTA_SCORE_MAP,
-                                    M_SCORE_MAP, NI_ROMAN_SCORE_MAP, _get_level_score, _get_ni_score)
-
-        pk_score = _get_level_score(factors['practical_knowledge'], PK_SCORE_MAP)
-        mk_score = _get_level_score(factors['managerial_knowledge'], MK_SCORE_MAP)
-        comm_score = _get_level_score(factors['communication'], COMM_SCORE_MAP)
-        te_score = _get_level_score(factors['thinking_environment'], TE_SCORE_MAP)
-        tc_score = _get_level_score(factors['thinking_challenge'], TC_SCORE_MAP)
-        fta_score = _get_level_score(factors['freedom_to_act'], FTA_SCORE_MAP)
-        m_score = _get_level_score(factors['magnitude'], M_SCORE_MAP)
-        ni_score = _get_ni_score(factors['nature_of_impact'], factors['magnitude'])
-
-        print(f"  因素分数转换:")
-        print(f"    PK({factors['practical_knowledge']})={pk_score}, MK({factors['managerial_knowledge']})={mk_score}, Comm({factors['communication']})={comm_score}")
-        print(f"    TE({factors['thinking_environment']})={te_score}, TC({factors['thinking_challenge']})={tc_score}")
-        print(f"    FTA({factors['freedom_to_act']})={fta_score}, M({factors['magnitude']})={m_score}, NI({factors['nature_of_impact']})={ni_score}")
-        print()
-        print(f"  能力计算公式 → 结果:")
-        print(f"    专业力 = PK(100%)                    = {pk_score}                      → {abilities['专业力']['score']}分")
-        print(f"    管理力 = MK(70%) + FTA(30%)          = {mk_score}×0.7 + {fta_score}×0.3 = {round(mk_score*0.7 + fta_score*0.3)} → {abilities['管理力']['score']}分")
-        print(f"    合作力 = Comm(80%) + NI(20%)         = {comm_score}×0.8 + {ni_score}×0.2 = {round(comm_score*0.8 + ni_score*0.2)} → {abilities['合作力']['score']}分")
-        print(f"    思辨力 = TE(100%)                    = {te_score}                      → {abilities['思辨力']['score']}分")
-        print(f"    创新力 = TC(100%)                    = {tc_score}                      → {abilities['创新力']['score']}分")
-        print("-" * 60)
-        print("【5能力最终结果】")
+        print("【8能力维度得分】")
         for name, info in abilities.items():
-            print(f"  {name}: {info['score']}分 ({info['level']})")
+            print(f"  {name}: {info['score']}分 ({info['level']}) [{info.get('grade', '')}]")
         print("=" * 60 + "\n")
 
         # ===========================================
@@ -871,7 +843,7 @@ def assess():
                 'M(影响范围)': factors['magnitude'],
                 'NI(影响性质)': factors['nature_of_impact'],
             },
-            'abilities': f"专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}",
+            'abilities': " ".join(f"{name}{info['score']}" for name, info in abilities.items()),
             'deep_insight': None,  # 已移除，深度洞察功能由聊天 Agent 承接
             'elapsed': f"{elapsed_time:.2f}",
             'invite_code': None,
@@ -891,7 +863,8 @@ def assess():
         print(f"──────────────────────────────────────────")
         print(f"结果: 职级{job_grade} | {level_tag} | {salary_range}")
         print(f"因素: PK={factors['practical_knowledge']} MK={factors['managerial_knowledge']} Comm={factors['communication']} TE={factors['thinking_environment']} TC={factors['thinking_challenge']}")
-        print(f"能力: 专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}")
+        abilities_str = ' '.join(f"{n}{d['score']}" for n, d in abilities.items())
+        print(f"能力: {abilities_str}")
         print(f"耗时: {elapsed_time:.2f}秒")
         print(f"══════════════════════════════════════════\n")
 
@@ -995,13 +968,16 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
     adj_low, adj_high = apply_student_coefficients(base_low, base_high, school_tier, education_level)
     salary_range = format_salary_k(adj_low, adj_high)
 
-    # 默认能力
+    # 默认能力（8维度）
     default_abilities = {
-        "专业力": {"score": 60, "level": "medium", "explanation": "具备扎实的专业基础"},
-        "管理力": {"score": 50, "level": "medium", "explanation": "能够管理自己的工作任务"},
-        "合作力": {"score": 55, "level": "medium", "explanation": "能够在团队内部有效沟通"},
-        "思辨力": {"score": 55, "level": "medium", "explanation": "能够分析和解决问题"},
-        "创新力": {"score": 50, "level": "medium", "explanation": "能够适应变化，学习新事物"}
+        "知识深度": {"score": 55, "level": "medium", "grade": "", "explanation": "具备扎实的专业基础"},
+        "统筹能力": {"score": 45, "level": "medium", "grade": "", "explanation": "能够管理自己的工作任务"},
+        "沟通影响": {"score": 55, "level": "medium", "grade": "", "explanation": "能够在团队内部有效沟通"},
+        "问题复杂度": {"score": 50, "level": "medium", "grade": "", "explanation": "能够在清晰的框架下分析和解决问题"},
+        "创新思维": {"score": 45, "level": "medium", "grade": "", "explanation": "能够在现有框架下完成工作"},
+        "决策自主性": {"score": 45, "level": "medium", "grade": "", "explanation": "在明确指引下执行工作"},
+        "影响规模": {"score": 40, "level": "low", "grade": "", "explanation": "工作成果主要影响个人或小团队"},
+        "贡献类型": {"score": 45, "level": "medium", "grade": "", "explanation": "以辅助和支持性贡献为主"},
     }
 
     return jsonify({

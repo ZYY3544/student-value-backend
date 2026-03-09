@@ -2,24 +2,20 @@
 ===========================================
 能力映射模块 (Ability Mapper)
 ===========================================
-将HAY 8因素转换为C端用户可理解的5个能力维度
+将 HAY 8因素档位转换为 C端用户可理解的 8 个能力维度
 
-5个能力维度：
-1. 专业力 - 技术/专业知识的深度和广度
-2. 管理力 - 管理和组织协调能力
-3. 合作力 - 沟通协作和影响力
-4. 思辨力 - 分析判断和解决问题的能力
-5. 创新力 - 创新思维和开拓能力
-
-映射关系：
-- 专业力 ← PK(60%) + TE(40%)
-- 管理力 ← MK(70%) + FTA(30%)
-- 合作力 ← Comm(80%) + NI(20%)
-- 思辨力 ← TC(60%) + TE(40%)
-- 创新力 ← TC(70%) + M(30%)
+8个能力维度（重命名以避免知识产权问题）：
+1. 知识深度    ← PK  专业知识的深度与广度
+2. 统筹能力    ← MK  组织协调与资源调度能力
+3. 沟通影响    ← Comm 表达、说服与跨团队协作
+4. 问题复杂度  ← TE  面对问题的模糊程度与复杂性
+5. 创新思维    ← TC  突破常规、提出新方案的能力
+6. 决策自主性  ← FTA 独立判断与自主决策的空间
+7. 影响规模    ← M   工作成果影响的范围大小
+8. 贡献类型    ← NI  对组织的贡献是辅助性还是主导性
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict
 from logger import get_module_logger
 
 logger = get_module_logger(__name__)
@@ -108,35 +104,63 @@ NI_RCSP_SCORE_MAP = {
 
 
 # ===========================================
-# 能力解释文案
+# 8维能力 → 因素键名 映射
 # ===========================================
 
-ABILITY_EXPLANATIONS = {
-    "专业力": {
-        "high": "具备深厚的专业知识储备，能够处理高复杂度的专业问题，是领域内的专家",
-        "medium": "具备扎实的专业基础，能够独立完成常规专业工作，处理一定复杂度的问题",
-        "low": "具备基础专业能力，适合执行标准化的工作流程，需要指导完成复杂任务"
+# 因素键名 → (中文能力名, 分数映射表)
+FACTOR_DIMENSION_MAP = {
+    'practical_knowledge':  '知识深度',
+    'managerial_knowledge': '统筹能力',
+    'communication':        '沟通影响',
+    'thinking_environment': '问题复杂度',
+    'thinking_challenge':   '创新思维',
+    'freedom_to_act':       '决策自主性',
+    'magnitude':            '影响规模',
+    'nature_of_impact':     '贡献类型',
+}
+
+# 每个维度的 high/medium/low 解释文案
+DIMENSION_EXPLANATIONS = {
+    "知识深度": {
+        "high": "具备深厚的专业知识储备，能够处理高复杂度的专业问题",
+        "medium": "具备扎实的专业基础，能够独立完成常规专业工作",
+        "low": "具备基础专业知识，适合执行标准化的工作流程",
     },
-    "管理力": {
-        "high": "能够统筹多个业务单元或职能领域，具备战略级管理视野，引领组织发展",
-        "medium": "能够管理团队或项目，协调多方资源达成目标，具备独立管理能力",
-        "low": "能够管理自己的工作任务，配合团队完成目标，正在积累管理经验"
+    "统筹能力": {
+        "high": "能够统筹多个业务模块，协调复杂的跨团队资源",
+        "medium": "能够管理团队或项目，协调多方资源达成目标",
+        "low": "能够管理自己的工作任务，配合团队完成目标",
     },
-    "合作力": {
-        "high": "能够影响高层决策，在复杂环境中建立广泛共识，具备强大的人际影响力",
-        "medium": "能够跨部门协作，有效沟通和协调各方利益，推动项目落地",
-        "low": "能够在团队内部有效沟通，配合完成协作任务，建立良好的工作关系"
+    "沟通影响": {
+        "high": "能够影响关键决策，在复杂场景中建立广泛共识",
+        "medium": "能够跨部门协作，有效沟通和推动项目落地",
+        "low": "能够在团队内部有效沟通，配合完成协作任务",
     },
-    "思辨力": {
-        "high": "能够在模糊环境中识别问题本质，做出战略性判断，洞察力强",
-        "medium": "能够分析复杂问题，提出有价值的解决方案，具备系统思考能力",
-        "low": "能够按照既定框架分析和解决问题，逻辑清晰，执行到位"
+    "问题复杂度": {
+        "high": "能够在高度模糊的环境中识别问题本质并做出判断",
+        "medium": "能够分析复杂问题，在有一定框架的情境中独立思考",
+        "low": "能够在清晰的框架下分析和解决问题",
     },
-    "创新力": {
-        "high": "能够开拓新领域，推动突破性创新，引领行业变革",
-        "medium": "能够改进现有流程和方法，推动渐进式创新，持续优化",
-        "low": "能够在现有框架下完成工作，适应变化，学习新事物"
-    }
+    "创新思维": {
+        "high": "能够开拓新领域，提出突破性的解决方案",
+        "medium": "能够改进现有流程和方法，推动持续优化",
+        "low": "能够在现有框架下完成工作，学习和适应新方法",
+    },
+    "决策自主性": {
+        "high": "能够在重大事项上独立决策，承担高层级判断责任",
+        "medium": "能够在日常工作中自主决策，把握方向",
+        "low": "在明确指引下执行工作，逐步积累判断经验",
+    },
+    "影响规模": {
+        "high": "工作成果直接影响大规模业务或较大团队",
+        "medium": "工作成果影响特定业务模块或项目范围",
+        "low": "工作成果主要影响个人或小团队的产出",
+    },
+    "贡献类型": {
+        "high": "在组织中承担核心产出角色，直接创造关键成果",
+        "medium": "对业务成果有显著贡献，既有支持也有直接产出",
+        "low": "以辅助和支持性贡献为主，协助推动业务目标",
+    },
 }
 
 
@@ -145,31 +169,15 @@ ABILITY_EXPLANATIONS = {
 # ===========================================
 
 def _get_level_score(value: str, score_map: Dict[str, int], default: int = 50) -> int:
-    """
-    从档位获取分数
-
-    Args:
-        value: 档位值（如 'E', 'E+', 'II'）
-        score_map: 档位-分数映射表
-        default: 默认分数
-
-    Returns:
-        分数（1-100）
-    """
+    """从档位获取分数"""
     if not value:
         return default
 
-    # 直接查找
     if value in score_map:
         return score_map[value]
 
-    # 尝试移除+/-后查找
     base_value = value.rstrip('+-')
     if base_value in score_map:
-        return score_map[base_value]
-
-    # 尝试添加基准后查找
-    if f"{base_value}" in score_map:
         return score_map[base_value]
 
     logger.warning(f"未找到档位 '{value}' 的映射，使用默认值 {default}")
@@ -177,61 +185,17 @@ def _get_level_score(value: str, score_map: Dict[str, int], default: int = 50) -
 
 
 def _get_ni_score(ni_value: str, magnitude: str) -> int:
-    """
-    获取影响性质(NI)的分数
-
-    根据magnitude决定使用哪个评分系统：
-    - M='N' → 使用I-VI系统
-    - M=数字 → 使用RCSP系统
-
-    Args:
-        ni_value: NI档位值
-        magnitude: M档位值
-
-    Returns:
-        分数（1-100）
-    """
+    """获取影响性质(NI)的分数，根据magnitude决定使用RCSP还是罗马数字系统"""
     if not ni_value:
         return 50
-
-    # 判断使用哪个系统
     if magnitude == 'N' or magnitude.startswith('N'):
-        # 不可量化，使用罗马数字系统
         return _get_level_score(ni_value, NI_ROMAN_SCORE_MAP, 50)
     else:
-        # 可量化，使用RCSP系统
         return _get_level_score(ni_value, NI_RCSP_SCORE_MAP, 50)
 
 
-def _weighted_average(scores_weights: list) -> int:
-    """
-    计算加权平均分
-
-    Args:
-        scores_weights: [(score, weight), ...] 分数-权重对列表
-
-    Returns:
-        加权平均分（整数，1-100）
-    """
-    total_score = sum(score * weight for score, weight in scores_weights)
-    total_weight = sum(weight for _, weight in scores_weights)
-
-    if total_weight == 0:
-        return 50
-
-    return round(total_score / total_weight)
-
-
 def _get_level_tag(score: int) -> str:
-    """
-    根据分数获取等级标签
-
-    Args:
-        score: 分数（1-100）
-
-    Returns:
-        等级标签：'high', 'medium', 'low'
-    """
+    """根据分数获取等级标签"""
     if score >= 70:
         return 'high'
     elif score >= 45:
@@ -240,9 +204,9 @@ def _get_level_tag(score: int) -> str:
         return 'low'
 
 
-def map_hay_to_5_abilities(hay_factors: Dict[str, str]) -> Dict[str, Dict]:
+def map_factors_to_dimensions(hay_factors: Dict[str, str]) -> Dict[str, Dict]:
     """
-    将HAY 8因素转换为5个能力维度
+    将 HAY 8因素转换为 8 个能力维度（1:1 直接映射，不做加权合并）
 
     Args:
         hay_factors: HAY 8因素字典
@@ -258,129 +222,65 @@ def map_hay_to_5_abilities(hay_factors: Dict[str, str]) -> Dict[str, Dict]:
             }
 
     Returns:
-        5个能力维度的详细信息
+        8个能力维度的详细信息
         {
-            "专业力": {"score": 72, "level": "high", "explanation": "..."},
-            "管理力": {"score": 65, "level": "medium", "explanation": "..."},
-            "合作力": {"score": 78, "level": "high", "explanation": "..."},
-            "思辨力": {"score": 70, "level": "medium", "explanation": "..."},
-            "创新力": {"score": 68, "level": "medium", "explanation": "..."}
+            "知识深度": {"score": 60, "level": "medium", "grade": "E", "explanation": "..."},
+            "统筹能力": {"score": 50, "level": "medium", "grade": "II", "explanation": "..."},
+            ...
         }
     """
-    logger.info("[AbilityMapper] 开始映射HAY 8因素 → 5能力维度")
+    logger.info("[AbilityMapper] 开始映射 HAY 8因素 → 8 能力维度")
 
-    # 提取各因素
-    pk = hay_factors.get('practical_knowledge', 'D')
-    mk = hay_factors.get('managerial_knowledge', 'I')
-    comm = hay_factors.get('communication', '2')
-    te = hay_factors.get('thinking_environment', 'D')
-    tc = hay_factors.get('thinking_challenge', '3')
-    fta = hay_factors.get('freedom_to_act', 'C')
-    m = hay_factors.get('magnitude', 'N')
-    ni = hay_factors.get('nature_of_impact', 'III')
-
-    # 转换为分数
-    pk_score = _get_level_score(pk, PK_SCORE_MAP)
-    mk_score = _get_level_score(mk, MK_SCORE_MAP)
-    comm_score = _get_level_score(comm, COMM_SCORE_MAP)
-    te_score = _get_level_score(te, TE_SCORE_MAP)
-    tc_score = _get_level_score(tc, TC_SCORE_MAP)
-    fta_score = _get_level_score(fta, FTA_SCORE_MAP)
-    m_score = _get_level_score(m, M_SCORE_MAP)
-    ni_score = _get_ni_score(ni, m)
-
-    logger.debug(f"  因素分数: PK={pk_score}, MK={mk_score}, Comm={comm_score}, "
-                f"TE={te_score}, TC={tc_score}, FTA={fta_score}, M={m_score}, NI={ni_score}")
-
-    # 计算5个能力维度
-    abilities = {}
-
-    # 1. 专业力 = PK(100%) - 100%看专业知识
-    professional_score = pk_score
-    professional_level = _get_level_tag(professional_score)
-    abilities["专业力"] = {
-        "score": professional_score,
-        "level": professional_level,
-        "explanation": ABILITY_EXPLANATIONS["专业力"][professional_level]
+    # 各因素对应的分数映射表
+    score_maps = {
+        'practical_knowledge':  PK_SCORE_MAP,
+        'managerial_knowledge': MK_SCORE_MAP,
+        'communication':        COMM_SCORE_MAP,
+        'thinking_environment': TE_SCORE_MAP,
+        'thinking_challenge':   TC_SCORE_MAP,
+        'freedom_to_act':       FTA_SCORE_MAP,
+        'magnitude':            M_SCORE_MAP,
     }
 
-    # 2. 管理力 = MK(70%) + FTA(30%)
-    management_score = _weighted_average([
-        (mk_score, 0.7),
-        (fta_score, 0.3)
-    ])
-    management_level = _get_level_tag(management_score)
-    abilities["管理力"] = {
-        "score": management_score,
-        "level": management_level,
-        "explanation": ABILITY_EXPLANATIONS["管理力"][management_level]
-    }
+    dimensions = {}
 
-    # 3. 合作力 = Comm(80%) + NI(20%)
-    collaboration_score = _weighted_average([
-        (comm_score, 0.8),
-        (ni_score, 0.2)
-    ])
-    collaboration_level = _get_level_tag(collaboration_score)
-    abilities["合作力"] = {
-        "score": collaboration_score,
-        "level": collaboration_level,
-        "explanation": ABILITY_EXPLANATIONS["合作力"][collaboration_level]
-    }
+    for factor_key, dimension_name in FACTOR_DIMENSION_MAP.items():
+        grade = hay_factors.get(factor_key, '')
 
-    # 4. 思辨力 = TE(100%) - 100%看思维环境
-    analytical_score = te_score
-    analytical_level = _get_level_tag(analytical_score)
-    abilities["思辨力"] = {
-        "score": analytical_score,
-        "level": analytical_level,
-        "explanation": ABILITY_EXPLANATIONS["思辨力"][analytical_level]
-    }
+        # NI 需要特殊处理（依赖 M 的值来选择评分系统）
+        if factor_key == 'nature_of_impact':
+            m_value = hay_factors.get('magnitude', 'N')
+            score = _get_ni_score(grade, m_value)
+        else:
+            score_map = score_maps[factor_key]
+            score = _get_level_score(grade, score_map)
 
-    # 5. 创新力 = TC(100%) - 100%看思维挑战
-    innovation_score = tc_score
-    innovation_level = _get_level_tag(innovation_score)
-    abilities["创新力"] = {
-        "score": innovation_score,
-        "level": innovation_level,
-        "explanation": ABILITY_EXPLANATIONS["创新力"][innovation_level]
-    }
+        level = _get_level_tag(score)
 
-    logger.info(f"[AbilityMapper] 映射完成: 专业力={professional_score}, 管理力={management_score}, "
-               f"合作力={collaboration_score}, 思辨力={analytical_score}, 创新力={innovation_score}")
+        dimensions[dimension_name] = {
+            "score": score,
+            "level": level,
+            "grade": grade,
+            "explanation": DIMENSION_EXPLANATIONS[dimension_name][level],
+        }
 
-    return abilities
+    log_parts = [f"{name}={info['score']}" for name, info in dimensions.items()]
+    logger.info(f"[AbilityMapper] 映射完成: {', '.join(log_parts)}")
+
+    return dimensions
 
 
-def get_ability_radar_data(abilities: Dict[str, Dict]) -> Dict[str, int]:
-    """
-    获取雷达图数据（简化版，只返回分数）
-
-    Args:
-        abilities: map_hay_to_5_abilities() 的返回值
-
-    Returns:
-        {"专业力": 72, "管理力": 65, "合作力": 78, "思辨力": 70, "创新力": 68}
-    """
-    return {name: info["score"] for name, info in abilities.items()}
+def get_dimension_radar_data(dimensions: Dict[str, Dict]) -> Dict[str, int]:
+    """获取雷达图数据（只返回分数）"""
+    return {name: info["score"] for name, info in dimensions.items()}
 
 
-def get_ability_summary(abilities: Dict[str, Dict]) -> str:
-    """
-    生成能力总结文案
+def get_dimension_summary(dimensions: Dict[str, Dict]) -> str:
+    """生成能力总结文案"""
+    sorted_dims = sorted(dimensions.items(), key=lambda x: x[1]["score"], reverse=True)
+    highest = sorted_dims[0]
+    lowest = sorted_dims[-1]
 
-    Args:
-        abilities: map_hay_to_5_abilities() 的返回值
-
-    Returns:
-        总结文案字符串
-    """
-    # 找出最高和最低的能力
-    sorted_abilities = sorted(abilities.items(), key=lambda x: x[1]["score"], reverse=True)
-    highest = sorted_abilities[0]
-    lowest = sorted_abilities[-1]
-
-    # 生成总结
     summary = f"您的核心优势在于【{highest[0]}】，{highest[1]['explanation'][:30]}..."
 
     if lowest[1]["score"] < 50:
@@ -390,56 +290,19 @@ def get_ability_summary(abilities: Dict[str, Dict]) -> str:
 
 
 # ===========================================
-# 测试代码
+# 向后兼容（保留旧函数名，内部转发）
 # ===========================================
 
-if __name__ == "__main__":
-    # 测试用例1: 中级产品经理
-    test_factors_1 = {
-        'practical_knowledge': 'E',
-        'managerial_knowledge': 'II',
-        'communication': '2',
-        'thinking_environment': 'D',
-        'thinking_challenge': '3',
-        'freedom_to_act': 'C',
-        'magnitude': 'N',
-        'nature_of_impact': 'III'
-    }
+def map_hay_to_5_abilities(hay_factors: Dict[str, str]) -> Dict[str, Dict]:
+    """向后兼容: 转发到 map_factors_to_dimensions"""
+    return map_factors_to_dimensions(hay_factors)
 
-    print("\n" + "="*60)
-    print("测试用例1: 中级产品经理")
-    print("="*60)
-    print(f"输入因素: {test_factors_1}")
 
-    abilities_1 = map_hay_to_5_abilities(test_factors_1)
-    print(f"\n5能力得分:")
-    for name, info in abilities_1.items():
-        print(f"  {name}: {info['score']}分 ({info['level']})")
-        print(f"    └─ {info['explanation']}")
+def get_ability_radar_data(abilities: Dict[str, Dict]) -> Dict[str, int]:
+    """向后兼容: 转发到 get_dimension_radar_data"""
+    return get_dimension_radar_data(abilities)
 
-    print(f"\n雷达图数据: {get_ability_radar_data(abilities_1)}")
-    print(f"能力总结: {get_ability_summary(abilities_1)}")
 
-    # 测试用例2: 销售总监
-    test_factors_2 = {
-        'practical_knowledge': 'F',
-        'managerial_knowledge': 'III',
-        'communication': '3',
-        'thinking_environment': 'E',
-        'thinking_challenge': '4',
-        'freedom_to_act': 'D',
-        'magnitude': '4',
-        'nature_of_impact': 'S'
-    }
-
-    print("\n" + "="*60)
-    print("测试用例2: 销售总监")
-    print("="*60)
-    print(f"输入因素: {test_factors_2}")
-
-    abilities_2 = map_hay_to_5_abilities(test_factors_2)
-    print(f"\n5能力得分:")
-    for name, info in abilities_2.items():
-        print(f"  {name}: {info['score']}分 ({info['level']})")
-
-    print(f"\n雷达图数据: {get_ability_radar_data(abilities_2)}")
+def get_ability_summary(abilities: Dict[str, Dict]) -> str:
+    """向后兼容: 转发到 get_dimension_summary"""
+    return get_dimension_summary(abilities)
