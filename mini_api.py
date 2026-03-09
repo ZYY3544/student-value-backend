@@ -615,7 +615,7 @@ def assess():
             "level": 14,
             "levelTag": "业务脊梁",
             "levelDesc": "你是团队的中流砥柱...",
-            "abilities": {...},        // 5能力详情
+            "abilities": {...},        // 8能力详情
             "radarData": {...},        // 雷达图数据
             "abilitySummary": "..."    // 能力总结
         }
@@ -869,17 +869,26 @@ def assess():
         print(f"══════════════════════════════════════════\n")
 
         response_data = {
-            'salaryRange': salary_range,
-            'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
+            # === 能力评估（纯简历驱动） ===
             'level': job_grade,
             'levelTag': level_tag,
             'levelDesc': level_desc,
-
             'abilities': abilities,
             'radarData': radar_data,
             'abilitySummary': ability_summary,
-            'salaryCompetitiveness': salary_competitiveness,  # 薪酬竞争力百分位 0-100
-            'resumeHealthScore': _calc_resume_health(abilities),  # 简历健康度 0-100
+            'abilityCompetitiveness': salary_competitiveness,  # 能力百分位 0-100（基于职级在同届中的排名）
+            'resumeHealthScore': _calc_resume_health(abilities),
+
+            # === 市场薪酬参考（城市/行业/职能驱动） ===
+            'salaryRange': salary_range,  # 保留以兼容旧前端
+            'marketSalary': {
+                'range': salary_range,
+                'note': '月度基本工资（不含年终奖金及其他福利）',
+                'city': raw_city,
+                'industry': industry,
+                'function': job_function,
+            },
+            'salaryCompetitiveness': salary_competitiveness,  # 向后兼容
 
             # 学生版附加信息
             'schoolTier': school_tier,
@@ -983,16 +992,25 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
     return jsonify({
         'success': True,
         'data': {
-            'salaryRange': salary_range,
-            'salaryNote': '月度基本工资（不含年终奖金及其他福利）',
             'level': job_grade,
             'levelTag': "萌新探路者",
             'levelDesc': "刚踏出校门第一步，世界很大，你的好奇心更大。起点不决定终点，你的故事才刚刚开始写呢。",
             'abilities': default_abilities,
             'radarData': {name: info["score"] for name, info in default_abilities.items()},
             'abilitySummary': "建议持续提升专业能力，拓展校招竞争力。",
+            'abilityCompetitiveness': 30,
+            'resumeHealthScore': 40,
+            'salaryRange': salary_range,
+            'marketSalary': {
+                'range': salary_range,
+                'note': '月度基本工资（不含年终奖金及其他福利）',
+                'city': city,
+                'industry': industry,
+                'function': job_function,
+            },
+            'salaryCompetitiveness': 30,
             'schoolTier': school_tier,
-            'factors': None
+            'factors': None,
         }
     }), 200
 
@@ -1104,7 +1122,7 @@ def chat_start():
     {
         "assessmentContext": {
             "factors": {...},         // HAY 8因素
-            "abilities": {...},       // 5维能力
+            "abilities": {...},       // 8维能力
             "grade": 12,
             "salaryRange": "8.5k~12k",
             "jobTitle": "产品经理",
