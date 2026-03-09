@@ -7,6 +7,7 @@
 """
 
 import io
+import os
 import re
 from docx import Document
 from docx.shared import Pt, Inches, Cm, RGBColor
@@ -483,5 +484,128 @@ def generate_resume_docx(resume_sections: list, user_name: str = '') -> io.Bytes
 
     buf = io.BytesIO()
     doc.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def generate_resume_pdf(resume_sections: list, user_name: str = '') -> io.BytesIO:
+    """
+    生成 PDF 版简历
+
+    策略：先生成 Word → 用 libreoffice 转换为 PDF
+    如果 libreoffice 不可用，回退到简单的文本 PDF（使用 reportlab 或纯文本）
+    """
+    import subprocess
+    import tempfile
+    import os
+
+    # 第一步：生成 Word
+    docx_buf = generate_resume_docx(resume_sections, user_name)
+
+    # 第二步：尝试用 libreoffice 转换
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docx_path = os.path.join(tmpdir, 'resume.docx')
+            pdf_path = os.path.join(tmpdir, 'resume.pdf')
+
+            with open(docx_path, 'wb') as f:
+                f.write(docx_buf.read())
+            docx_buf.seek(0)
+
+            result = subprocess.run(
+                ['libreoffice', '--headless', '--convert-to', 'pdf',
+                 '--outdir', tmpdir, docx_path],
+                capture_output=True, timeout=30,
+            )
+
+            if result.returncode == 0 and os.path.exists(pdf_path):
+                pdf_buf = io.BytesIO()
+                with open(pdf_path, 'rb') as f:
+                    pdf_buf.write(f.read())
+                pdf_buf.seek(0)
+                return pdf_buf
+
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        print(f"[ResumeExport] libreoffice 转换失败: {e}，回退到纯文本 PDF")
+
+    # 回退方案：生成简单的纯文本 PDF
+    return _generate_simple_pdf(resume_sections, user_name)
+
+
+def _generate_simple_pdf(resume_sections: list, user_name: str = '') -> io.BytesIO:
+    """
+    回退方案：用纯 Python 生成简单 PDF（不依赖 libreoffice）
+    使用 fpdf2（轻量级，纯 Python）
+    """
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        # 如果 fpdf2 也没有，返回 Word 文件并标注
+        print("[ResumeExport] fpdf2 未安装，无法生成 PDF，返回 Word")
+        return generate_resume_docx(resume_sections, user_name)
+
+    pdf = FPDF()
+    pdf.add_page()
+
+    # 尝试添加中文字体
+    font_added = False
+    for font_path in [
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+    ]:
+        if os.path.exists(font_path):
+            try:
+                pdf.add_font('CJK', '', font_path, uni=True)
+                pdf.set_font('CJK', size=10)
+                font_added = True
+                break
+            except Exception:
+                continue
+
+    if not font_added:
+        pdf.set_font('Helvetica', size=10)
+
+    # 标题
+    if user_name:
+        pdf.set_font_size(20)
+        pdf.cell(0, 15, user_name, ln=True, align='C')
+        pdf.ln(5)
+
+    # 按 section 排列
+    sorted_sections = sorted(
+        resume_sections,
+        key=lambda s: SECTION_META.get(s.get('type', 'other'), (99, ''))[0]
+    )
+
+    current_type = None
+    for entry in sorted_sections:
+        sec_type = entry.get('type', 'other')
+        title = entry.get('title', '')
+        content = entry.get('content', '')
+
+        if sec_type != current_type:
+            current_type = sec_type
+            _, label = SECTION_META.get(sec_type, (99, sec_type))
+            pdf.ln(3)
+            pdf.set_font_size(13)
+            pdf.cell(0, 8, label, ln=True)
+            pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 170, pdf.get_y())
+            pdf.ln(2)
+
+        pdf.set_font_size(10)
+        if title:
+            pdf.set_font(style='B')
+            pdf.cell(0, 6, title, ln=True)
+            pdf.set_font(style='')
+
+        if content:
+            for line in content.split('\n'):
+                stripped = line.strip()
+                if stripped:
+                    pdf.multi_cell(0, 5, '  ' + stripped)
+
+    buf = io.BytesIO()
+    pdf.output(buf)
     buf.seek(0)
     return buf

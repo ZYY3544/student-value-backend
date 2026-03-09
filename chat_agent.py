@@ -687,14 +687,38 @@ class ChatAgent:
 
         threading.Thread(target=_bg_plan, daemon=True).start()
 
-        # ===== 使用模板开场白（无需 LLM，即时返回） =====
-        print(f"[Orchestrator] 使用模板开场白（跳过 DiagnosisAgent LLM 调用）")
+        # ===== 个性化开场白 =====
+        print(f"[Orchestrator] 生成个性化开场白")
+
+        # 从评测数据提取个性化信息
+        job_title = assessment_context.get("jobTitle", "")
+        city = assessment_context.get("city", "")
+        abilities = assessment_context.get("abilities", {})
+
+        # 找出最强能力维度
+        strongest = ""
+        if isinstance(abilities, dict) and abilities:
+            sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get("score", 0), reverse=True)
+            if sorted_abs:
+                strongest = sorted_abs[0][0]
+
+        # 个性化建议（基于评测数据）
+        personalized_tip = ""
+        if strongest and job_title:
+            personalized_tip = f"\n\n💡 从评测来看，你的**{strongest}**很突出，我们可以重点在简历中强化这个优势，让它跟**{job_title}**的要求精准匹配。"
+        elif job_title:
+            personalized_tip = f"\n\n💡 你的目标是**{job_title}**方向，我可以帮你搜一下这个方向的岗位要求，然后针对性地改简历。"
+
         greeting = (
-            "Hello，我是你的专属简历改写助手，你可以叫我小铭，我已经仔细看过你的评测结果和简历内容啦，接下来我可以帮你做这几件事情：\n\n"
-            "📝 **简历优化**：让简历内容更清晰、亮点更突出，帮你打动面试官\n\n"
-            "🔍 **岗位搜索**：看看现在市场上有什么适合你的新机会\n\n"
-            "🎯 **匹配分析**：对比你的简历和岗位要求，看看差距在哪儿、还能怎么补\n\n"
-            "你想先试试哪一项？可以直接告诉我哟，我们马上开始啦～"
+            "Hello，我是你的专属求职伙伴小铭，我已经仔细看过你的评测结果和简历内容啦，接下来我可以帮你做这些事情：\n\n"
+            "📝 **简历优化**：让简历内容更清晰、亮点更突出\n\n"
+            "🎯 **JD 定制改写**：给我一个 JD，我直接帮你把简历改成匹配版\n\n"
+            "🔍 **岗位搜索**：搜索市场岗位，帮你识别真假信息\n\n"
+            "📊 **多岗位对比**：同时对比多个岗位，看哪个最适合你\n\n"
+            "📁 **多版本管理**：针对不同公司维护不同版本简历\n\n"
+            "🧭 **方向探索**：如果你还不确定方向，我帮你一起想"
+            f"{personalized_tip}\n\n"
+            "你想先试试哪一项？"
         )
 
         # 保存到对话历史

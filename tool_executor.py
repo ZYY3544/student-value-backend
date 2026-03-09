@@ -69,6 +69,30 @@ class ToolExecutor:
                 return self.fetch_url(
                     url=arguments.get("url", ""),
                 )
+            elif tool_name == "tailor_resume_to_jd":
+                return self.tailor_resume_to_jd(
+                    jd_text=arguments.get("jd_text", ""),
+                )
+            elif tool_name == "verify_job_posting":
+                return self.verify_job_posting(
+                    jd_text=arguments.get("jd_text", ""),
+                )
+            elif tool_name == "compare_multiple_jds":
+                return self.compare_multiple_jds(
+                    jd_list=arguments.get("jd_list", []),
+                )
+            elif tool_name == "save_resume_version":
+                return self.save_resume_version(
+                    label=arguments.get("label", ""),
+                    resume_text=arguments.get("resume_text", ""),
+                    target_jd=arguments.get("target_jd", ""),
+                )
+            elif tool_name == "list_resume_versions":
+                return self.list_resume_versions()
+            elif tool_name == "switch_resume_version":
+                return self.switch_resume_version(
+                    version_id=arguments.get("version_id", ""),
+                )
             else:
                 return json.dumps(
                     {"error": f"未知工具: {tool_name}"},
@@ -113,6 +137,13 @@ class ToolExecutor:
                 r["source_type"] = "求职经验"
             else:
                 r["source_type"] = "其他"
+            # 可信度评估
+            credibility = self._assess_credibility(
+                url, r.get("title", ""), r.get("snippet", "")
+            )
+            r["trust_level"] = credibility["trust_level"]
+            if credibility["warnings"]:
+                r["warnings"] = credibility["warnings"]
 
         if results:
             return json.dumps(
@@ -370,20 +401,30 @@ class ToolExecutor:
         resume_preview = resume_text[:3000]
         jd_preview = jd_text[:2000]
 
-        prompt = f"""请对比以下简历和 JD（岗位描述），从以下维度分析匹配度：
+        prompt = f"""请对比以下简历和 JD（岗位描述），做深度匹配分析：
 
 1. **整体匹配度**：用百分比和等级（高度匹配/较好匹配/一般匹配/较低匹配）表示
-2. **优势匹配**：简历中与 JD 要求高度吻合的 2-3 个点
-3. **差距分析**：JD 要求但简历中缺失或薄弱的 2-3 个点
-4. **优化建议**：针对差距，给出具体的简历改进建议
+2. **JD 底层能力要求解析**：从 JD 中提取 3-5 个核心能力要求，每个说明要求等级
+3. **优势匹配**：简历中与 JD 要求高度吻合的 2-3 个点
+4. **差距分析**：JD 要求但简历中缺失或薄弱的 2-3 个点
+5. **针对性改写建议**：针对每个差距，指出简历中哪个具体段落可以强化，并给出改写方向
 
 输出严格的 JSON 格式：
 {{
     "match_percentage": 75,
     "match_level": "较好匹配",
+    "required_abilities": [
+        {{"ability": "数据分析能力", "level": "熟练", "jd_evidence": "JD中原文依据"}},
+        {{"ability": "跨部门协作", "level": "有经验", "jd_evidence": "JD中原文依据"}}
+    ],
     "strengths": ["优势1", "优势2"],
-    "gaps": ["差距1", "差距2"],
-    "suggestions": ["建议1", "建议2"]
+    "gaps": [
+        {{"gap": "缺少XX能力体现", "importance": "高/中/低", "resume_section": "可强化的简历段落名"}},
+        {{"gap": "缺少YY经验", "importance": "高/中/低", "resume_section": "可强化的简历段落名"}}
+    ],
+    "tailored_suggestions": [
+        {{"section": "实习经历-XX公司", "current_issue": "当前问题", "rewrite_direction": "改写方向", "target_ability": "对应JD要求的能力"}}
+    ]
 }}
 
 【简历内容】
@@ -535,3 +576,338 @@ class ToolExecutor:
         text = re.sub(r'\n\s*\n', '\n\n', text)
         text = re.sub(r' +', ' ', text)
         return text.strip()
+
+    # --------------------------------------------------
+    # 工具 5: 一站式 JD 定制改简历
+    # --------------------------------------------------
+
+    def tailor_resume_to_jd(self, jd_text: str) -> str:
+        """
+        一站式链路：解析 JD → 比对简历 → 生成定制化改写建议
+
+        不只是分析匹配度，而是直接输出改写后的简历段落。
+        """
+        if not self.llm_service:
+            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
+
+        resume_text = ""
+        if self._original_assessment:
+            resume_text = self._original_assessment.get("resume_text", "")
+        if not resume_text:
+            return json.dumps({"error": "未找到简历内容"}, ensure_ascii=False)
+
+        resume_preview = resume_text[:3000]
+        jd_preview = jd_text[:2000]
+
+        prompt = f"""你是一位简历定制专家。请完成以下三步一站式任务：
+
+**第一步：解析 JD 核心要求**
+从 JD 中提取 3-5 个核心能力要求。
+
+**第二步：识别简历差距**
+对比简历与 JD 要求，找出 2-3 个最关键的差距。
+
+**第三步：直接改写**
+针对每个差距，直接给出简历对应段落的改写版本（不是建议，是完成改写后的文本）。
+改写规则：
+- 基于简历已有信息润色，不编造经历
+- 用 STAR 结构强化
+- 突出与 JD 匹配的关键词和能力
+- 缺少数据的地方用 [待补充: 具体数字] 标记
+
+输出严格 JSON：
+{{
+    "jd_summary": "JD 一句话概括",
+    "core_requirements": [
+        {{"ability": "能力名", "importance": "核心/重要/加分"}}
+    ],
+    "tailored_rewrites": [
+        {{
+            "section": "简历段落名",
+            "original": "原文（简短引用）",
+            "rewritten": "改写后的完整段落文本（可直接替换）",
+            "improvement": "这次改写强化了什么能力，与 JD 的哪条要求匹配"
+        }}
+    ],
+    "overall_match_after": "改写后预估匹配度提升（如 60% → 78%）"
+}}
+
+【简历内容】
+{resume_preview}
+
+【JD 内容】
+{jd_preview}"""
+
+        print(f"[ToolExecutor] tailor_resume_to_jd: JD 长度={len(jd_text)}")
+
+        try:
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
+                messages=[
+                    {"role": "system", "content": "你是一位简历定制专家，擅长根据 JD 要求精准改写简历。输出纯 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.4,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(response.choices[0].message.content.strip())
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            print(f"[ToolExecutor] 一站式定制失败: {e}")
+            return json.dumps({"error": f"定制改写失败: {str(e)}"}, ensure_ascii=False)
+
+    # --------------------------------------------------
+    # 工具 6: 岗位真伪识别
+    # --------------------------------------------------
+
+    # 可信域名评级
+    _DOMAIN_TRUST = {
+        "zhipin.com": ("高", "Boss直聘官方平台"),
+        "liepin.com": ("高", "猎聘官方平台"),
+        "lagou.com": ("高", "拉勾官方平台"),
+        "51job.com": ("高", "前程无忧官方平台"),
+        "nowcoder.com": ("中", "牛客社区，内容由用户发布"),
+        "xiaohongshu.com": ("中", "小红书社区，内容由用户发布"),
+    }
+
+    # 虚假招聘常见关键词
+    _FRAUD_KEYWORDS = [
+        "包就业", "零基础", "学费", "培训费", "报名费", "押金",
+        "兼职日结", "刷单", "打字员", "在家办公月入过万",
+        "无需经验月薪上万", "转账", "保证金",
+    ]
+
+    def _assess_credibility(self, url: str, title: str, snippet: str) -> dict:
+        """评估单条搜索结果的可信度"""
+        trust_level = "中"
+        trust_reason = "来源可信度一般"
+        warnings = []
+
+        # 域名信任度
+        for domain, (level, reason) in self._DOMAIN_TRUST.items():
+            if domain in url:
+                trust_level = level
+                trust_reason = reason
+                break
+
+        # 关键词扫描
+        combined = (title + " " + snippet).lower()
+        for kw in self._FRAUD_KEYWORDS:
+            if kw in combined:
+                trust_level = "低"
+                warnings.append(f"包含可疑关键词「{kw}」")
+
+        # 薪资异常检测（校招月薪超过 5 万大概率有问题）
+        import re as _re
+        salary_match = _re.search(r'(\d+)[kK万]?\s*[-~至到]\s*(\d+)[kK万]?', combined)
+        if salary_match:
+            try:
+                high = int(salary_match.group(2))
+                if 'k' in combined[salary_match.start():salary_match.end()].lower():
+                    high *= 1000
+                if '万' in combined[salary_match.start():salary_match.end()]:
+                    high *= 10000
+                if high > 50000:
+                    warnings.append("薪资范围异常偏高，请核实")
+            except (ValueError, IndexError):
+                pass
+
+        if warnings:
+            trust_level = "低"
+
+        return {
+            "trust_level": trust_level,
+            "trust_reason": trust_reason,
+            "warnings": warnings,
+        }
+
+    def verify_job_posting(self, jd_text: str) -> str:
+        """
+        使用 LLM 分析一份 JD 是否存在虚假招聘特征
+        """
+        if not self.llm_service:
+            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
+
+        jd_preview = jd_text[:2000]
+
+        prompt = f"""请分析以下岗位描述是否存在虚假招聘的特征。
+
+从以下维度检查：
+1. 是否要求求职者缴纳费用（培训费、押金、报名费等）
+2. 薪资是否与岗位要求明显不匹配（要求低但薪资极高）
+3. 公司信息是否模糊（无明确公司名、地址不详）
+4. 是否有培训机构伪装招聘的迹象（"包就业"、"零基础转行"）
+5. 岗位描述是否过于空泛、缺少具体工作内容
+6. 是否存在常见骗局话术
+
+输出 JSON：
+{{
+    "credibility_score": 85,
+    "risk_level": "低风险/中风险/高风险",
+    "is_likely_genuine": true,
+    "risk_factors": ["风险因素1（如有）"],
+    "positive_signals": ["可信信号1"],
+    "advice": "一句话建议"
+}}
+
+【JD 内容】
+{jd_preview}"""
+
+        try:
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
+                messages=[
+                    {"role": "system", "content": "你是一位招聘市场安全专家，擅长识别虚假招聘。输出纯 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(response.choices[0].message.content.strip())
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            print(f"[ToolExecutor] 真伪识别失败: {e}")
+            return json.dumps({"error": f"真伪识别失败: {str(e)}"}, ensure_ascii=False)
+
+    # --------------------------------------------------
+    # 工具 7: 多 JD 横向对比
+    # --------------------------------------------------
+
+    def compare_multiple_jds(self, jd_list: list) -> str:
+        """
+        横向对比多个 JD 与简历的匹配度，推荐最适合的岗位
+
+        Args:
+            jd_list: [{"title": "岗位名", "jd_text": "JD全文"}, ...]
+        """
+        if not self.llm_service:
+            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
+
+        resume_text = ""
+        if self._original_assessment:
+            resume_text = self._original_assessment.get("resume_text", "")
+        if not resume_text:
+            return json.dumps({"error": "未找到简历内容"}, ensure_ascii=False)
+
+        if not jd_list or len(jd_list) < 2:
+            return json.dumps({"error": "至少需要 2 个 JD 进行对比"}, ensure_ascii=False)
+
+        resume_preview = resume_text[:2500]
+        jds_text = ""
+        for i, jd in enumerate(jd_list[:4]):  # 最多 4 个
+            title = jd.get("title", f"岗位{i+1}")
+            text = jd.get("jd_text", "")[:1200]
+            jds_text += f"\n\n--- JD {i+1}: {title} ---\n{text}"
+
+        prompt = f"""请将以下简历与多个 JD 进行横向对比，找出最匹配的岗位。
+
+对每个 JD：
+1. 计算匹配度百分比
+2. 列出 2 个优势和 2 个差距
+3. 给出投递优先级建议
+
+最后给出推荐排序。
+
+输出 JSON：
+{{
+    "comparisons": [
+        {{
+            "jd_title": "岗位名",
+            "match_percentage": 75,
+            "match_level": "较好匹配",
+            "strengths": ["优势1", "优势2"],
+            "gaps": ["差距1", "差距2"],
+            "priority": "推荐投递/可以尝试/匹配度较低"
+        }}
+    ],
+    "recommendation": "综合建议（1-2句话，推荐先投哪个、为什么）",
+    "ranking": ["岗位名1（最推荐）", "岗位名2", "岗位名3"]
+}}
+
+【简历内容】
+{resume_preview}
+
+【JD 列表】
+{jds_text}"""
+
+        try:
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
+                messages=[
+                    {"role": "system", "content": "你是一位资深招聘顾问。输出纯 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+            result = json.loads(response.choices[0].message.content.strip())
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            print(f"[ToolExecutor] 多JD对比失败: {e}")
+            return json.dumps({"error": f"多JD对比失败: {str(e)}"}, ensure_ascii=False)
+
+    # --------------------------------------------------
+    # 工具 8-10: 多版本简历管理
+    # --------------------------------------------------
+
+    def save_resume_version(self, label: str, resume_text: str, target_jd: str = "") -> str:
+        """保存当前简历为一个命名版本"""
+        import time as _time
+        if not hasattr(self, '_resume_versions'):
+            self._resume_versions = {}
+
+        version_id = f"v_{len(self._resume_versions) + 1}"
+        self._resume_versions[version_id] = {
+            "label": label,
+            "resume_text": resume_text,
+            "target_jd": target_jd[:500] if target_jd else "",
+            "created_at": _time.time(),
+        }
+
+        return json.dumps({
+            "version_id": version_id,
+            "label": label,
+            "message": f"简历版本「{label}」已保存，版本号: {version_id}",
+            "total_versions": len(self._resume_versions),
+        }, ensure_ascii=False)
+
+    def list_resume_versions(self) -> str:
+        """列出所有已保存的简历版本"""
+        if not hasattr(self, '_resume_versions') or not self._resume_versions:
+            return json.dumps({
+                "versions": [],
+                "message": "还没有保存任何简历版本。优化完简历后可以保存为不同投递方向的版本。"
+            }, ensure_ascii=False)
+
+        versions = []
+        for vid, info in self._resume_versions.items():
+            versions.append({
+                "version_id": vid,
+                "label": info["label"],
+                "target_jd": info["target_jd"][:100] if info.get("target_jd") else "",
+                "resume_preview": info["resume_text"][:200] + "...",
+            })
+
+        return json.dumps({
+            "versions": versions,
+            "total": len(versions),
+        }, ensure_ascii=False)
+
+    def switch_resume_version(self, version_id: str) -> str:
+        """切换到指定版本的简历"""
+        if not hasattr(self, '_resume_versions') or version_id not in self._resume_versions:
+            return json.dumps({"error": f"版本 {version_id} 不存在"}, ensure_ascii=False)
+
+        version = self._resume_versions[version_id]
+        # 通过 conversation_memory 通知 Agent 切换了版本
+        if self.conversation_memory:
+            self.conversation_memory.set_user_preference(
+                "current_version", f"{version['label']} ({version_id})"
+            )
+
+        return json.dumps({
+            "version_id": version_id,
+            "label": version["label"],
+            "resume_text": version["resume_text"],
+            "message": f"已切换到简历版本「{version['label']}」",
+        }, ensure_ascii=False)

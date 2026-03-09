@@ -1539,6 +1539,50 @@ def chat_resume_export():
 
 
 # ===========================================
+# 简历 PDF 导出
+# ===========================================
+
+@app.route('/api/chat/resume/export-pdf', methods=['POST'])
+def chat_resume_export_pdf():
+    """
+    将当前 session 的简历导出为 PDF 文档
+
+    请求体: { "sessionId": "uuid" }
+    响应: .pdf 文件流
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId', '')
+        if not session_id:
+            return jsonify({'success': False, 'error': '缺少 sessionId'}), 400
+
+        session = chat_agent.session_manager.get_session(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+        resume_sections = session.get('resume_sections')
+        if not resume_sections:
+            return jsonify({'success': False, 'error': '简历数据不存在，请先进入简历画布'}), 400
+
+        from resume_export import generate_resume_pdf
+        buffer = generate_resume_pdf(resume_sections)
+
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='我的简历.pdf',
+        )
+
+    except Exception as e:
+        print(f"[简历PDF导出] 失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===========================================
 # 启动服务
 # ===========================================
 
