@@ -190,11 +190,102 @@ P2-1 (认知框架) ───┤  依赖主动执行流的引导能力
 P2-2 (多JD对比) ───┘  依赖 JD 解析升级
 ```
 
-## 预期效果
+## 已完成（代码已提交）
 
-全部完成后 SPARK 评分预计从 5.65 提升至 8.5-9.0：
-- S (智能简历): 6.9 → 8.5
-- P (主动规划): 5.8 → 8.5
-- A (分析匹配): 4.8 → 8.0
-- R (信息搜集): 4.5 → 7.5
-- K (认知引导): 5.2 → 8.0
+| 改造项 | 状态 | 说明 |
+|--------|------|------|
+| P0-1 JD 结构化解析 + 一站式定制 | ✅ 已完成 | tailor_resume_to_jd + compare_with_jd 升级 |
+| P0-2 Agent 主动执行流 | ✅ 已完成 | PlanningAgent 升级 + 个性化开场 + 代码级自动触发 JD 建议 |
+| P1-1 多版本简历管理 | ✅ 已完成 | save/list/switch + Supabase 持久化 + 跨会话加载 |
+| P1-2 信息真伪识别 | ✅ 已完成 | 规则引擎 + LLM 深度分析 + 搜索结果自动标注 |
+| P1-3 PDF 导出 | ✅ 已完成 | libreoffice → fpdf2 双方案 + API 端点 |
+| P2-1 职业认知框架 | ✅ 已完成 | 迷茫期引导 + AI 时代趋势 + 能力画像解读 |
+| P2-2 多 JD 横向对比 | ✅ 已完成 | compare_multiple_jds 工具 |
+
+## 需要你在电脑端完成的事项
+
+### 1. Supabase 建表（必须）
+简历版本持久化需要在 Supabase 中创建 `resume_versions` 表：
+```sql
+CREATE TABLE resume_versions (
+    id TEXT PRIMARY KEY,           -- 格式: {session_id}_{version_id}
+    session_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,      -- 如 v_1, v_2
+    label TEXT NOT NULL,           -- 如「字节跳动-产品经理版」
+    resume_text TEXT NOT NULL,
+    target_jd TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_resume_versions_user ON resume_versions(user_id);
+```
+
+### 2. Google CSE 站点配置扩展（建议）
+当前 Google Custom Search Engine 只限定了 4 个站点（zhipin/liepin/nowcoder/xiaohongshu）。
+建议在 [Google CSE 控制台](https://cse.google.com/) 中增加以下站点：
+- zhaopin.com（智联招聘）
+- shixiseng.com（实习僧）
+- yingjiesheng.com（应届生求职网）
+- lagou.com（拉勾）
+- maimai.cn（脉脉）
+
+### 3. PDF 中文字体安装（建议）
+服务器部署时需要中文字体支持。两种方案：
+
+**方案 A：系统安装字体（推荐）**
+```bash
+# Ubuntu/Debian
+apt-get install fonts-wqy-microhei
+
+# CentOS/RHEL
+yum install wqy-microhei-fonts
+```
+
+**方案 B：项目目录放字体文件**
+```bash
+mkdir -p fonts/
+# 下载 Noto Sans SC 字体到 fonts/ 目录
+wget -O fonts/NotoSansSC-Regular.ttf \
+  "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
+```
+
+### 4. 安装 fpdf2 依赖（必须）
+```bash
+pip install fpdf2
+# 或在 requirements.txt 中添加
+echo "fpdf2>=2.7.0" >> requirements.txt
+```
+
+### 5. Docker 镜像更新（如果使用 Docker 部署）
+在 Dockerfile 中添加：
+```dockerfile
+RUN apt-get update && apt-get install -y \
+    libreoffice-writer \
+    fonts-wqy-microhei \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+### 6. 接入天眼查/企查查 API（可选，冲 9 分）
+当前真伪识别基于关键词规则 + LLM 分析，没有实时工商信息验证。
+如果要增强可信度：
+- 注册天眼查开放平台 API（有免费额度）
+- 在 `verify_job_posting` 中增加公司名工商查询
+- 验证公司是否存在、注册资本、经营状态等
+
+### 7. 行业趋势数据源（可选，冲 9 分）
+当前职业认知引导依赖 LLM 通用知识，没有实时数据。
+可考虑：
+- 定期爬取招聘平台的行业报告/趋势数据
+- 接入脉脉或猎聘的行业数据 API
+- 在项目中维护一个 `career_knowledge.json` 文件，定期更新行业趋势
+
+## 实际评分
+
+经过两轮改造，SPARK 评分从 5.65 提升至 7.81：
+- S (智能简历): 6.9 → 8.25
+- P (主动规划): 5.8 → 7.83
+- A (分析匹配): 4.8 → 8.17
+- R (信息搜集): 4.5 → 7.0
+- K (认知引导): 5.2 → 7.17
+
+完成上述电脑端配置后，预计可达 8.5+。

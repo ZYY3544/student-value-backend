@@ -35,6 +35,10 @@ class ToolExecutor:
         self.conversation_memory = conversation_memory
         # 缓存原始评测结果，用于重评估对比
         self._original_assessment = None
+        # 简历版本管理
+        self._resume_versions = {}
+        # 外部回调：保存版本时通知 SessionManager 持久化（由 ChatAgent 注入）
+        self._on_version_saved = None
 
     def set_original_assessment(self, assessment_context: dict):
         """缓存原始评测结果，供 re_evaluate_resume 做对比"""
@@ -123,18 +127,22 @@ class ToolExecutor:
         city_text = city if city != "全国" else ""
         print(f"[ToolExecutor] search_jobs: keyword={keyword}, city={city}")
 
-        # Google Custom Search（CSE 已限定 zhipin/liepin/nowcoder/xiaohongshu）
-        query = f"{keyword} {city_text} 校招"
+        # Google Custom Search
+        # 注：CSE 站点限制需在 Google CSE 控制台配置，这里关键词优化覆盖面
+        query = f"{keyword} {city_text} 校招 招聘"
         results = self._google_search(query, num=8)
 
         for r in results:
             url = r.get("link", "")
-            if "zhipin.com" in url or "liepin.com" in url:
+            if any(d in url for d in ("zhipin.com", "liepin.com", "lagou.com",
+                                       "51job.com", "zhaopin.com", "shixiseng.com")):
                 r["source_type"] = "JD"
             elif "nowcoder.com" in url:
                 r["source_type"] = "面经"
-            elif "xiaohongshu.com" in url:
+            elif any(d in url for d in ("xiaohongshu.com", "zhihu.com", "douban.com")):
                 r["source_type"] = "求职经验"
+            elif "yingjiesheng.com" in url:
+                r["source_type"] = "校招资讯"
             else:
                 r["source_type"] = "其他"
             # 可信度评估
@@ -662,19 +670,37 @@ class ToolExecutor:
 
     # 可信域名评级
     _DOMAIN_TRUST = {
+        # 高可信度：官方招聘平台
         "zhipin.com": ("高", "Boss直聘官方平台"),
         "liepin.com": ("高", "猎聘官方平台"),
         "lagou.com": ("高", "拉勾官方平台"),
         "51job.com": ("高", "前程无忧官方平台"),
-        "nowcoder.com": ("中", "牛客社区，内容由用户发布"),
-        "xiaohongshu.com": ("中", "小红书社区，内容由用户发布"),
+        "zhaopin.com": ("高", "智联招聘官方平台"),
+        "shixiseng.com": ("高", "实习僧官方平台"),
+        "yingjiesheng.com": ("高", "应届生求职网"),
+        "linkedin.com": ("高", "LinkedIn 职业社交平台"),
+        "maimai.cn": ("中高", "脉脉职场社交平台"),
+        # 中等可信度：社区类内容
+        "nowcoder.com": ("中", "牛客社区，面经为主，内容由用户发布"),
+        "xiaohongshu.com": ("中", "小红书社区，求职经验分享"),
+        "zhihu.com": ("中", "知乎，求职讨论为主"),
+        "douban.com": ("中", "豆瓣，求职小组讨论"),
+        # 低可信度：需警惕
+        "58.com": ("低", "58同城，虚假信息较多，需仔细核实"),
+        "ganji.com": ("低", "赶集网，虚假信息较多，需仔细核实"),
     }
 
-    # 虚假招聘常见关键词
+    # 虚假招聘常见关键词（扩展版）
     _FRAUD_KEYWORDS = [
+        # 培训机构伪装
         "包就业", "零基础", "学费", "培训费", "报名费", "押金",
+        "包分配", "先学后付", "免费培训", "转行培训", "IT培训",
+        # 常见骗局
         "兼职日结", "刷单", "打字员", "在家办公月入过万",
-        "无需经验月薪上万", "转账", "保证金",
+        "无需经验月薪上万", "转账", "保证金", "入职体检费",
+        "日薪500", "日薪1000", "躺赚", "轻松月入",
+        # 中介陷阱
+        "挂靠", "代缴社保", "人力资源外包招聘",
     ]
 
     def _assess_credibility(self, url: str, title: str, snippet: str) -> dict:
@@ -853,8 +879,6 @@ class ToolExecutor:
     def save_resume_version(self, label: str, resume_text: str, target_jd: str = "") -> str:
         """保存当前简历为一个命名版本"""
         import time as _time
-        if not hasattr(self, '_resume_versions'):
-            self._resume_versions = {}
 
         version_id = f"v_{len(self._resume_versions) + 1}"
         self._resume_versions[version_id] = {
@@ -863,6 +887,13 @@ class ToolExecutor:
             "target_jd": target_jd[:500] if target_jd else "",
             "created_at": _time.time(),
         }
+
+        # 通知 SessionManager 持久化到 Supabase
+        if self._on_version_saved:
+            try:
+                self._on_version_saved(version_id, label, resume_text, target_jd)
+            except Exception as e:
+                print(f"[ToolExecutor] 版本持久化回调失败: {e}")
 
         return json.dumps({
             "version_id": version_id,

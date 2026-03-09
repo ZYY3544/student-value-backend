@@ -547,23 +547,44 @@ def _generate_simple_pdf(resume_sections: list, user_name: str = '') -> io.Bytes
     pdf = FPDF()
     pdf.add_page()
 
-    # 尝试添加中文字体
+    # 尝试添加中文字体（按优先级搜索多个常见路径）
     font_added = False
-    for font_path in [
+    _FONT_SEARCH_PATHS = [
+        # Docker/Ubuntu 常见路径
         '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-    ]:
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        # CentOS/RHEL
+        '/usr/share/fonts/wqy-microhei/wqy-microhei.ttc',
+        '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
+        # macOS（本地开发时）
+        '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
+        '/Library/Fonts/Arial Unicode.ttf',
+        # Windows（本地开发时）
+        'C:/Windows/Fonts/msyh.ttc',
+        'C:/Windows/Fonts/simhei.ttf',
+        # 项目本地字体目录（推荐：部署时放一个字体文件到项目目录）
+        os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansSC-Regular.ttf'),
+        os.path.join(os.path.dirname(__file__), 'fonts', 'wqy-microhei.ttc'),
+    ]
+    for font_path in _FONT_SEARCH_PATHS:
         if os.path.exists(font_path):
             try:
                 pdf.add_font('CJK', '', font_path, uni=True)
                 pdf.set_font('CJK', size=10)
                 font_added = True
+                print(f"[ResumeExport] PDF 使用字体: {font_path}")
                 break
             except Exception:
                 continue
 
     if not font_added:
+        print("[ResumeExport] ⚠ 未找到中文字体，PDF 中文可能显示异常。"
+              "建议安装 wqy-microhei 或在 fonts/ 目录放入 NotoSansSC-Regular.ttf")
         pdf.set_font('Helvetica', size=10)
 
     # 标题

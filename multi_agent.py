@@ -774,7 +774,8 @@ EDIT>>>
     TEMPERATURE = 0.5
 
     # 工具调用最大循环次数（防止无限调用）
-    MAX_TOOL_ROUNDS = 3
+    # 提升到 5 轮以支持多步链路：如 search→fetch_url→tailor_resume_to_jd→save_version
+    MAX_TOOL_ROUNDS = 5
 
     def __init__(self, client: OpenAI, model: str, tool_executor=None):
         self.client = client

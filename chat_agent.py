@@ -155,6 +155,8 @@ class SessionManager:
             "pending_phase_transition": None,  # 待确认的阶段转换（如 "summary"）
             "hallucination_warning": None,  # 幻觉检测警告
             "reeval_suggested": False,  # 是否已建议过重评估
+            "resume_versions": {},  # 多版本简历 {version_id: {label, resume_text, target_jd, created_at}}
+            "jd_auto_suggested": False,  # 是否已主动建议过 JD 定制
         }
 
         with self._lock:
@@ -240,6 +242,57 @@ class SessionManager:
             except Exception as e:
                 print(f"[Supabase] 会话摘要保存失败: {e}")
         threading.Thread(target=_do, daemon=True).start()
+
+    def save_resume_version(self, session_id: str, version_id: str,
+                            label: str, resume_text: str, target_jd: str = ""):
+        """保存简历版本到 session + Supabase"""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session["resume_versions"][version_id] = {
+                    "label": label,
+                    "resume_text": resume_text,
+                    "target_jd": target_jd[:500] if target_jd else "",
+                    "created_at": time.time(),
+                }
+        # 异步持久化到 Supabase
+        if _supabase_client:
+            def _do():
+                try:
+                    session = self._sessions.get(session_id)
+                    user_id = session.get('user_id') if session else None
+                    if not user_id:
+                        return
+                    _supabase_client.table('resume_versions').upsert({
+                        'id': f"{session_id}_{version_id}",
+                        'session_id': session_id,
+                        'user_id': user_id,
+                        'version_id': version_id,
+                        'label': label,
+                        'resume_text': resume_text,
+                        'target_jd': target_jd[:500] if target_jd else "",
+                    }).execute()
+                    print(f"[Supabase] 简历版本已保存: {label}")
+                except Exception as e:
+                    print(f"[Supabase] 简历版本保存失败: {e}")
+            threading.Thread(target=_do, daemon=True).start()
+
+    @staticmethod
+    def load_resume_versions(user_id: str) -> list:
+        """从 Supabase 加载用户的所有简历版本"""
+        if not _supabase_client or not user_id:
+            return []
+        try:
+            resp = _supabase_client.table('resume_versions') \
+                .select('version_id, label, target_jd, resume_text') \
+                .eq('user_id', user_id) \
+                .order('created_at', desc=True) \
+                .limit(20) \
+                .execute()
+            return resp.data or []
+        except Exception as e:
+            print(f"[Supabase] 加载简历版本失败: {e}")
+            return []
 
     @staticmethod
     def load_cross_session_memory(user_id: str) -> str:
@@ -648,6 +701,23 @@ class ChatAgent:
                 **assessment_context,
                 "resume_text": resume_text,
             })
+            # 注入版本持久化回调
+            _sid = session_id
+            _sm = self.session_manager
+            tool_executor._on_version_saved = lambda vid, label, text, jd: \
+                _sm.save_resume_version(_sid, vid, label, text, jd)
+            # 加载用户之前保存的简历版本
+            if user_id:
+                saved_versions = SessionManager.load_resume_versions(user_id)
+                for v in saved_versions:
+                    tool_executor._resume_versions[v['version_id']] = {
+                        "label": v['label'],
+                        "resume_text": v['resume_text'],
+                        "target_jd": v.get('target_jd', ''),
+                        "created_at": 0,
+                    }
+                if saved_versions:
+                    print(f"[Orchestrator] 已加载 {len(saved_versions)} 个历史简历版本")
             # 存到 session 中，后续 chat/chat_stream 可取用
             self.session_manager.update_session(session_id, {
                 "tool_executor": tool_executor,
@@ -936,6 +1006,25 @@ class ChatAgent:
             )
         return None
 
+    def _check_jd_auto_suggestion(self, session: dict) -> Optional[str]:
+        """
+        代码级自动触发：改完简历后主动建议 JD 定制
+
+        条件：已优化 >= 1 个段落 且 尚未建议过 JD 定制 且 用户有明确目标岗位
+        """
+        if session.get("jd_auto_suggested"):
+            return None
+        memory: ConversationMemory = session["memory"]
+        ctx = session.get("assessment_context", {})
+        job_title = ctx.get("jobTitle", "")
+
+        if len(memory.optimized_sections) >= 1 and job_title:
+            return (
+                f"💡 对了，你的目标是**{job_title}**方向——要不要发一个你感兴趣的 JD 给我？"
+                f"我可以直接帮你把简历按 JD 的要求定制化改写，一步到位！"
+            )
+        return None
+
     def _build_report_analysis_prompt(self, session: dict) -> str:
         """构建深度报告解读的 System Prompt（复用小程序 AI 深度分析）"""
         ctx = session["assessment_context"]
@@ -1188,6 +1277,12 @@ class ChatAgent:
                 reply = reply + "\n\n---\n\n" + reeval_hint
                 self.session_manager.update_session(session_id, {"reeval_suggested": True})
 
+            # 程序化 JD 定制建议（改完 1 段后主动提示）
+            jd_hint = self._check_jd_auto_suggestion(session)
+            if jd_hint and phase == "optimizing" and not reeval_hint:
+                reply = reply + "\n\n---\n\n" + jd_hint
+                self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
+
             # 保存回复
             self.session_manager.add_message(session_id, "assistant", reply)
 
@@ -1335,6 +1430,14 @@ class ChatAgent:
                 full_reply += reeval_block
                 yield reeval_block
                 self.session_manager.update_session(session_id, {"reeval_suggested": True})
+
+            # 程序化 JD 定制建议（改完 1 段后主动提示）
+            jd_hint = self._check_jd_auto_suggestion(session)
+            if jd_hint and phase == "optimizing" and not reeval_hint:
+                jd_block = "\n\n---\n\n" + jd_hint
+                full_reply += jd_block
+                yield jd_block
+                self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
 
             # 保存完整回复
             if full_reply:
