@@ -97,7 +97,7 @@ export const generateAssessment = async (input: AssessmentInput, retryCount: num
     abilities: data.abilities,
     radarData: data.radarData,
     abilitySummary: data.abilitySummary,
-    deepInsight: data.deepInsight,
+    // deepInsight 已移至聊天 Agent，评测报告不再返回
     salaryCompetitiveness: data.salaryCompetitiveness,
     resumeHealthScore: data.resumeHealthScore,
 
@@ -261,7 +261,7 @@ async function mockAssessment(input: AssessmentInput): Promise<AssessmentResult>
       创新力: mockAbilities.创新力.score,
     },
     abilitySummary: "您的核心优势在于专业力，建议持续深耕专业领域。",
-    deepInsight: `基于对您${input.jobTitle || "岗位"}履历的综合分析，您在**专业领域**有较为扎实的积累，尤其在${input.industry || "所在行业"}的**实操经验**方面表现突出。建议在未来的职业发展中，进一步强化**管理能力**和**跨领域协作能力**，以实现从专业型人才向**复合型人才**的转变。同时，关注**行业前沿趋势**，持续提升**创新思维**，将有助于在竞争激烈的市场中保持优势。`,
+    // deepInsight 已移至聊天 Agent，mock 数据同步移除
     strengths: [
       `深耕${input.industry || "行业"}领域，具备极强的业务闭环思维`,
       `${input.jobFunction || "职能"}核心技术栈积淀深厚`,

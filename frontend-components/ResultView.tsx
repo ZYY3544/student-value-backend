@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { AssessmentResult, AssessmentInput, AbilityItem } from '../types';
 import {
   Sparkles, Target,
-  Lightbulb, Quote, Brain, Handshake, PenTool
+  Lightbulb, Brain, Handshake, PenTool
 } from 'lucide-react';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis,
@@ -324,29 +324,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ result, inputData, onRes
            </div>
         </div>
 
-        {/* 深度分析结论 */}
-        <div className="bg-white rounded-[44px] px-8 pt-6 pb-6 shadow-sm border border-[#b7ccab]/15 relative overflow-hidden">
-           <div className="flex flex-col mb-3">
-              <h3 className="font-black text-[#0A66C2] text-xl leading-tight">深度分析结论</h3>
-              <p className="text-[11px] text-[#110e0c] opacity-30 font-black uppercase tracking-widest mt-1">MODEL DEEP ANALYSIS</p>
-           </div>
-
-           <div className="bg-[#f8fafc] rounded-[24px] px-5 py-6 relative pt-10">
-              <Quote className="absolute top-4 left-4 text-[#e2e8f0]" size={28} fill="currentColor" />
-              <div className="text-[#334155] text-sm leading-8 font-medium text-justify space-y-4">
-                {result.deepInsight
-                  ? result.deepInsight.split(/\n\s*\n/).map((para, i) => (
-                      <p key={i}>{para.trim().split(/(\*\*[^*]+\*\*)/).map((seg, j) =>
-                        seg.startsWith('**') && seg.endsWith('**')
-                          ? <span key={j} className="font-black text-[#0A66C2]" style={{ textDecoration: 'underline wavy #3b82f6', textDecorationThickness: '1.5px', textUnderlineOffset: '3px' }}>{seg.slice(2, -2)}</span>
-                          : seg
-                      )}</p>
-                    ))
-                  : <p>暂无深度评估分析</p>
-                }
-              </div>
-           </div>
-        </div>
+        {/* 深度分析结论 — 已移至聊天 Agent，评测报告不再展示 */}
       </div>
 
       {/* 再测一次按钮 */}
@@ -365,7 +343,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ result, inputData, onRes
           salaryRange: result.personValue || '',
           jobTitle: inputData.jobTitle,
           jobFunction: inputData.jobFunction,
-          deepInsight: result.deepInsight,
+          // deepInsight 已移至聊天 Agent
         }}
         resumeText={inputData.resumeText}
         apiBase="https://student-value-backend.onrender.com"

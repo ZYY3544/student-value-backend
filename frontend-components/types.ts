@@ -55,7 +55,7 @@ export interface AssessmentResult {
   abilities?: Abilities;
   radarData?: RadarData;
   abilitySummary?: string;
-  deepInsight?: string;
+  // deepInsight 已移至聊天 Agent，评测报告不再返回
   salaryCompetitiveness?: number;
   resumeHealthScore?: number;
   logId?: number;

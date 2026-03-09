@@ -35,7 +35,7 @@ interface ChatWidgetProps {
     salaryRange: string;
     jobTitle: string;
     jobFunction: string;
-    deepInsight?: string;
+    // deepInsight 已移至聊天 Agent
   };
   resumeText: string;
   apiBase?: string;

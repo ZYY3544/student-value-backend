@@ -872,7 +872,7 @@ def assess():
                 'NI(影响性质)': factors['nature_of_impact'],
             },
             'abilities': f"专业力{abilities['专业力']['score']} 管理力{abilities['管理力']['score']} 合作力{abilities['合作力']['score']} 思辨力{abilities['思辨力']['score']} 创新力{abilities['创新力']['score']}",
-            'deep_insight': None,
+            'deep_insight': None,  # 已移除，深度洞察功能由聊天 Agent 承接
             'elapsed': f"{elapsed_time:.2f}",
             'invite_code': None,
             'welcome_s': welcome_s,
