@@ -115,7 +115,7 @@ class ToolExecutor:
 
     def search_jobs(self, keyword: str, city: str = "全国") -> str:
         """
-        多源搜索招聘信息：Google Custom Search API → LLM 兜底
+        多源搜索招聘信息：Tavily Search API → LLM 兜底
 
         Args:
             keyword: 搜索关键词（岗位名称）
@@ -127,10 +127,9 @@ class ToolExecutor:
         city_text = city if city != "全国" else ""
         print(f"[ToolExecutor] search_jobs: keyword={keyword}, city={city}")
 
-        # Google Custom Search
-        # 注：CSE 站点限制需在 Google CSE 控制台配置，这里关键词优化覆盖面
+        # Tavily Search API（全网搜索）
         query = f"{keyword} {city_text} 校招 招聘"
-        results = self._google_search(query, num=8)
+        results = self._tavily_search(query, max_results=8)
 
         for r in results:
             url = r.get("link", "")
@@ -155,32 +154,34 @@ class ToolExecutor:
 
         if results:
             return json.dumps(
-                {"keyword": keyword, "city": city, "source": "google_search", "results": results[:8]},
+                {"keyword": keyword, "city": city, "source": "tavily_search", "results": results[:8]},
                 ensure_ascii=False,
             )
 
-        # Google 无结果 → LLM 兜底
+        # Tavily 无结果 → LLM 兜底
         print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
         return self._llm_search_fallback(keyword, city)
 
-    def _google_search(self, query: str, num: int = 8) -> list:
-        """调用 Google Custom Search JSON API"""
-        api_key = os.environ.get('GOOGLE_API_KEY')
-        cx = os.environ.get('GOOGLE_CSE_ID')
-        if not api_key or not cx:
+    def _tavily_search(self, query: str, max_results: int = 8) -> list:
+        """调用 Tavily Search API（全网搜索）"""
+        api_key = os.environ.get('TAVILY_API_KEY')
+        if not api_key:
             return []
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {"key": api_key, "cx": cx, "q": query, "num": min(num, 10)}
         try:
-            resp = requests.get(url, params=params, timeout=10, proxies={"http": None, "https": None})
+            resp = requests.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"query": query, "max_results": min(max_results, 20), "search_depth": "basic"},
+                timeout=15,
+            )
             resp.raise_for_status()
             data = resp.json()
             return [
-                {"title": r["title"], "link": r["link"], "snippet": r.get("snippet", "")}
-                for r in data.get("items", [])
+                {"title": r.get("title", ""), "link": r.get("url", ""), "snippet": r.get("content", "")}
+                for r in data.get("results", [])
             ]
         except Exception as e:
-            print(f"[ToolExecutor] Google 搜索失败: {e}")
+            print(f"[ToolExecutor] Tavily 搜索失败: {e}")
             return []
 
     def _llm_search_fallback(self, keyword: str, city: str) -> str:
