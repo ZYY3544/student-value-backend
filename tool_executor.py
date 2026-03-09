@@ -133,7 +133,7 @@ class ToolExecutor:
         url = "https://www.googleapis.com/customsearch/v1"
         params = {"key": api_key, "cx": cx, "q": query, "num": min(num, 10)}
         try:
-            resp = requests.get(url, params=params, timeout=10)
+            resp = requests.get(url, params=params, timeout=10, proxies={"http": None, "https": None})
             resp.raise_for_status()
             data = resp.json()
             return [
@@ -447,7 +447,9 @@ class ToolExecutor:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             })
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            # 绕过系统代理，直接连接目标网站
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=10) as resp:
                 # 处理编码
                 charset = resp.headers.get_content_charset() or "utf-8"
                 html = resp.read().decode(charset, errors="replace")
