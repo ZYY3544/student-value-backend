@@ -1435,15 +1435,51 @@ def chat_edit_action():
 
         if action == 'accept':
             # 定向替换：用 original_text 定位并替换为 suggested_text
-            if original_text and original_text in resume_sections[idx]['content']:
-                resume_sections[idx]['content'] = resume_sections[idx]['content'].replace(
-                    original_text, suggested_text, 1
-                )
-            elif suggested_text:
-                # 降级：无法定位原文，直接替换整段
-                resume_sections[idx]['content'] = suggested_text
+            section_content = resume_sections[idx]['content']
+            replaced = False
+
+            if original_text and suggested_text:
+                # 精确匹配
+                if original_text in section_content:
+                    resume_sections[idx]['content'] = section_content.replace(original_text, suggested_text, 1)
+                    replaced = True
+                else:
+                    # 模糊匹配：忽略首尾空白和换行差异
+                    normalized_content = ' '.join(section_content.split())
+                    normalized_original = ' '.join(original_text.split())
+                    if normalized_original in normalized_content:
+                        # 找到原文在归一化内容中的位置，然后在原始内容中做替换
+                        # 逐行扫描找到最佳匹配
+                        lines = section_content.split('\n')
+                        full_text = section_content
+                        best_start = -1
+                        best_end = -1
+                        for start_line in range(len(lines)):
+                            for end_line in range(start_line, min(start_line + 10, len(lines))):
+                                candidate = '\n'.join(lines[start_line:end_line + 1])
+                                if ' '.join(candidate.split()) == normalized_original:
+                                    offset = full_text.find(candidate)
+                                    if offset != -1:
+                                        best_start = offset
+                                        best_end = offset + len(candidate)
+                                        break
+                            if best_start >= 0:
+                                break
+                        if best_start >= 0:
+                            resume_sections[idx]['content'] = (
+                                full_text[:best_start] + suggested_text + full_text[best_end:]
+                            )
+                            replaced = True
+
+            if not replaced and suggested_text:
+                print(f"[Agent API] ⚠️ 采纳编辑匹配失败，跳过替换（section={section_id}）")
+                # 不再整段替换，避免内容丢失
+
+            # 同步 resume_text（从 sections 重建完整简历）
+            full_resume = '\n\n'.join(sec.get('content', '') for sec in resume_sections)
             chat_agent.session_manager.update_session(session_id, {
-                'resume_sections': resume_sections
+                'resume_sections': resume_sections,
+                'resume_text': full_resume,
             })
             # 记入结构化记忆
             if memory:
@@ -1503,8 +1539,11 @@ def chat_section_update():
             return jsonify({'success': False, 'error': 'sectionId 超出范围'}), 400
 
         resume_sections[idx]['content'] = content
+        # 同步 resume_text
+        full_resume = '\n\n'.join(sec.get('content', '') for sec in resume_sections)
         chat_agent.session_manager.update_session(session_id, {
-            'resume_sections': resume_sections
+            'resume_sections': resume_sections,
+            'resume_text': full_resume,
         })
 
         return jsonify({'success': True, 'data': {'sectionId': section_id}}), 200
