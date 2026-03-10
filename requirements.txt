@@ -5,7 +5,7 @@
 flask>=2.3.0
 flask-cors>=4.0.0
 
-# DeepSeek API客户端（也用于 GLM OpenAI 兼容接口）
+# OpenAI 兼容接口（GLM 等模型使用）
 openai>=1.0.0
 
 # AWS Bedrock（Sonnet 模型）

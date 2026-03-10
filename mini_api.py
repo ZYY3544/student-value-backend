@@ -451,10 +451,9 @@ try:
     model_router = ModelRouter(usage_tracker)
     print("✓ 模型路由器初始化成功")
 except Exception as e:
-    print(f"⚠ 模型路由器初始化失败（将仅使用 DeepSeek）: {e}")
+    print(f"⚠ 模型路由器初始化失败: {e}")
 
-# LLM 服务（评估引擎用）
-# 优先使用 GLM，不可用时回退 DeepSeek
+# LLM 服务（评估引擎用）- 使用 GLM 模型
 llm_service = None
 llm_service_pk = None
 if model_router and model_router.glm_client:
@@ -466,19 +465,11 @@ if model_router and model_router.glm_client:
         print(f"✓ LLM服务初始化成功（GLM 模型: {model_router.glm_model}）")
         llm_service_pk = llm_service
     except Exception as e:
-        print(f"⚠ GLM LLM服务初始化失败，回退 DeepSeek: {e}")
+        print(f"✗ GLM LLM服务初始化失败: {e}")
 
 if llm_service is None:
-    try:
-        llm_service = LLMService(
-            api_key=config.DEEPSEEK_API_KEY,
-            model='deepseek-chat'
-        )
-        print("✓ LLM服务初始化成功（DeepSeek chat 模型 - 回退）")
-        llm_service_pk = llm_service
-    except Exception as e:
-        print(f"✗ LLM服务初始化失败: {e}")
-        exit(1)
+    print("✗ LLM服务初始化失败: GLM 未配置，请设置 GLM_API_KEY 环境变量")
+    exit(1)
 
 # 简历优化 Agent
 chat_agent = None

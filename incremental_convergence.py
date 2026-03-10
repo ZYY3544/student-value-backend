@@ -1062,7 +1062,7 @@ class IncrementalConvergence:
 
         # 检查LLM服务
         if not self.llm_service:
-            error_msg = "系统需要LLM服务才能运行。请检查DeepSeek API配置。"
+            error_msg = "系统需要LLM服务才能运行。请检查 GLM API 配置。"
             logger.error(f"[致命错误] {error_msg}")
             raise ValueError(error_msg)
 

@@ -100,8 +100,11 @@ def init_services():
     from validation_rules import validation_rules
 
     print("初始化服务...")
-    llm_service = LLMService(api_key=config.DEEPSEEK_API_KEY, model='deepseek-chat')
-    print("  ✓ LLM 服务")
+    from model_router import ModelRouter, UsageTracker, GLMCompatibleClient
+    from openai import OpenAI as _OpenAI
+    glm_client = GLMCompatibleClient(_OpenAI(api_key=config.GLM_API_KEY, base_url=config.GLM_BASE_URL))
+    llm_service = LLMService(client=glm_client, model=config.GLM_MODEL)
+    print("  ✓ LLM 服务（GLM）")
 
     convergence_engine = IncrementalConvergence(
         validation_rules=validation_rules,
@@ -117,7 +120,7 @@ def init_chat_agent(llm_service, convergence_engine):
     from chat_agent import ChatAgent
     agent = ChatAgent(
         client=llm_service.client,
-        model='deepseek-chat',
+        model=config.GLM_MODEL,
         llm_service=llm_service,
         convergence_engine=convergence_engine,
     )

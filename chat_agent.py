@@ -639,7 +639,7 @@ class ChatAgent:
     # 表示还想继续优化的信号词（优先级高于总结关键词）
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
-    def __init__(self, client: OpenAI, model: str = "deepseek-chat",
+    def __init__(self, client: OpenAI, model: str = "glm-5",
                  llm_service=None, convergence_engine=None,
                  model_router=None):
         self.client = client
@@ -670,21 +670,21 @@ class ChatAgent:
         """
         根据用户 ID 解析应使用的模型，并更新所有子 Agent
 
-        如果配置了 model_router，则根据用户用量选择 Sonnet 或 GLM；
-        否则回退到默认的 client/model（DeepSeek）。
+        如果配置了 model_router，则根据用户用量选择 GLM 或 Sonnet；
+        否则回退到默认的 client/model。
 
         Returns:
             (client, model, provider) 三元组
         """
         if not self.model_router:
-            return self.client, self.model, "deepseek"
+            return self.client, self.model, "glm"
 
         try:
             client, model, provider = self.model_router.get_client_for_user(user_id)
         except RuntimeError:
-            # 所有模型不可用，回退 DeepSeek
-            print("[Orchestrator] ModelRouter 无可用模型，回退 DeepSeek")
-            return self.client, self.model, "deepseek"
+            # 所有模型不可用，回退默认
+            print("[Orchestrator] ModelRouter 无可用模型，回退默认 client")
+            return self.client, self.model, "glm"
 
         # 更新所有子 Agent 的 client 和 model
         self.diagnosis_agent.client = client
@@ -718,7 +718,7 @@ class ChatAgent:
         Returns:
             {"session_id": "...", "greeting": "..."}
         """
-        # 根据用户解析模型（Sonnet/GLM/DeepSeek）
+        # 根据用户解析模型（GLM/Sonnet）
         active_client, active_model, active_provider = self._resolve_model_for_user(user_id)
 
         session_id = self.session_manager.create_session(

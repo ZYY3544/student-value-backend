@@ -902,7 +902,7 @@ EDIT>>>
 
                 for round_idx in range(self.MAX_TOOL_ROUNDS):
                     # 单次流式调用（带工具），同时处理 content 和 tool_calls
-                    # DeepSeek 中 tool_calls 和 content 互斥：
+                    # LLM 中 tool_calls 和 content 互斥：
                     #   - 模型决定调工具 → 流中只有 tool_calls delta，无 content
                     #   - 模型直接回复 → 流中只有 content delta，无 tool_calls
                     # 因此可以安全地边流式输出 content，边收集 tool_calls

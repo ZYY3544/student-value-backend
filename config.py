@@ -8,7 +8,7 @@
 使用方式：
     from config import config
 
-    api_key = config.DEEPSEEK_API_KEY
+    glm_key = config.GLM_API_KEY
     csv_path = config.SALARY_CSV_PATH
 """
 
@@ -40,38 +40,6 @@ class Config:
                         # 只有当环境变量不存在时才设置
                         if key and value and not os.getenv(key):
                             os.environ[key] = value
-
-    # ===========================================
-    # DeepSeek API 配置
-    # ===========================================
-
-    @property
-    def DEEPSEEK_API_KEY(self) -> Optional[str]:
-        """
-        DeepSeek API Key
-
-        优先级：
-        1. 环境变量 DEEPSEEK_API_KEY
-        2. .env 文件中的 DEEPSEEK_API_KEY
-
-        安全提示：切勿将API密钥硬编码在代码中
-        """
-        api_key = os.getenv('DEEPSEEK_API_KEY')
-        if not api_key:
-            print("警告: 未找到 DEEPSEEK_API_KEY 环境变量")
-            print("请在 .env 文件中设置: DEEPSEEK_API_KEY=your_api_key_here")
-        return api_key
-
-    @property
-    def DEEPSEEK_MODEL(self) -> str:
-        """
-        DeepSeek 模型名称
-
-        可选值：
-        - 'deepseek-chat': 标准对话模型（快速，成本低）
-        - 'deepseek-reasoner': 推理模型（深度思考，准确度高，推荐用于HAY评估）
-        """
-        return os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')  # 改为使用 chat 模型（更快）
 
     # ===========================================
     # 文件路径配置
@@ -263,19 +231,14 @@ class Config:
         # 检查 LLM 配置（至少需要一个可用的模型）
         has_sonnet = self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY
         has_glm = bool(self.GLM_API_KEY)
-        has_deepseek = bool(self.DEEPSEEK_API_KEY)
 
-        if not has_sonnet and not has_glm and not has_deepseek:
-            errors.append("至少需要配置一个 LLM 提供商（AWS Sonnet / GLM / DeepSeek）")
+        if not has_sonnet and not has_glm:
+            errors.append("至少需要配置一个 LLM 提供商（AWS Sonnet / GLM）")
 
         if not has_sonnet:
             warnings.append("AWS Bedrock 未配置，Sonnet 模型不可用")
         if not has_glm:
-            warnings.append("GLM 未配置，降级模型不可用")
-
-        # 向后兼容：保留 DeepSeek 检查
-        if not self.DEEPSEEK_API_KEY:
-            warnings.append("缺少 DEEPSEEK_API_KEY 配置（评估引擎仍需 DeepSeek）")
+            warnings.append("GLM 未配置，主力模型不可用")
 
         # 检查验证规则文件（警告，不影响基本功能）
         validation_files = [
@@ -302,8 +265,6 @@ class Config:
         print("当前配置信息")
         print("=" * 60)
         print(f"项目根目录: {self.BASE_DIR}")
-        print(f"DeepSeek API Key: {'已配置' if self.DEEPSEEK_API_KEY else '未配置'}")
-        print(f"DeepSeek 模型: {self.DEEPSEEK_MODEL}")
         print(f"AWS Bedrock: {'已配置' if self.AWS_ACCESS_KEY_ID else '未配置'} (Region: {self.AWS_REGION})")
         print(f"Sonnet 模型: {self.SONNET_MODEL_ID}")
         print(f"GLM API Key: {'已配置' if self.GLM_API_KEY else '未配置'}")
