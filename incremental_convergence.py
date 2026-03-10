@@ -1057,6 +1057,10 @@ class IncrementalConvergence:
                 }
             }
         """
+        import time as _time
+        _ct = {}  # convergence timing
+        _ct['start'] = _time.time()
+
         logger.info(f"=== 开始增量收敛（优化版：PK锚定策略）===")
         logger.info(f"岗位: {title}, 职能: {function}")
 
@@ -1067,6 +1071,7 @@ class IncrementalConvergence:
             raise ValueError(error_msg)
 
         # Step 1: 调用LLM提取PK档位（带符号的单一档位）
+        _ct['llm_start'] = _time.time()
         max_retries = 3
         last_exception = None
         pk_range = None
@@ -1116,6 +1121,8 @@ class IncrementalConvergence:
                     logger.error(f"[致命错误] {error_msg}")
                     raise RuntimeError(error_msg) from last_exception
 
+        _ct['llm_end'] = _time.time()
+
         # Step 2: 获取职能常模
         target_profiles = profile_norm_validator.get_norm_profiles(function)
         if not target_profiles:
@@ -1138,6 +1145,7 @@ class IncrementalConvergence:
         logger.info(f"  - 策略说明: LLM通过两步判断法直接给出带符号的PK档位")
 
         # Step 3: KH收敛（基于单一PK，极致收敛）
+        _ct['rules_start'] = _time.time()
         logger.info(f"[Step 3] KH收敛 - 基于单一PK: {selected_pk}")
 
         kh_combinations = []
@@ -1481,6 +1489,19 @@ class IncrementalConvergence:
                 ]
             }
         }
+
+        _ct['rules_end'] = _time.time()
+
+        # 收敛引擎内部耗时汇总
+        _llm_time = _ct['llm_end'] - _ct['llm_start']
+        _rules_time = _ct['rules_end'] - _ct['rules_start']
+        _total_conv = _ct['rules_end'] - _ct['start']
+        logger.info(f"\n{'─' * 50}")
+        logger.info(f"⏱️  收敛引擎内部耗时:")
+        logger.info(f"  LLM调用(extract_pk): {_llm_time:.2f}s  ← {'⚠️ 瓶颈!' if _llm_time > 3 else '✓'}")
+        logger.info(f"  规则收敛(Step3-8):   {_rules_time:.3f}s")
+        logger.info(f"  总计:                {_total_conv:.2f}s")
+        logger.info(f"{'─' * 50}")
 
         return {
             'best_solution': best_solution,

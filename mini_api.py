@@ -699,23 +699,29 @@ def assess():
         print(f"[调试] eval_text前500字:\n{eval_text[:500] if eval_text else '(空)'}\n")
 
         # ===========================================
-        # 核心评估流程
+        # 核心评估流程（带分步耗时日志）
         # ===========================================
+        _t = {}  # 各步骤耗时记录
+        _t['total_start'] = time.time()
 
         # 0. 并行启动简历结构拆分（利用收敛引擎等待时间）
         _sections_result = [None]
+        _split_timing = [0.0, 0.0]  # [start, end]
         def _bg_split_assess():
+            _split_timing[0] = time.time()
             try:
                 _sections_result[0] = split_resume_sections(
                     model_router.glm_client, model_router.glm_model, resume_text
                 )
             except Exception as e:
                 print(f"[评估] 简历拆分失败（不影响评估）: {e}")
+            _split_timing[1] = time.time()
         split_thread = threading.Thread(target=_bg_split_assess, daemon=True)
         split_thread.start()
 
         # 1. 增量收敛引擎分析
         print("[步骤1] 增量收敛分析...")
+        _t['convergence_start'] = time.time()
         convergence_result = convergence_engine.find_optimal_solution(
             eval_text=eval_text,
             title=job_title,
@@ -723,6 +729,7 @@ def assess():
             revenue_contribution={'type': 'not_quantifiable'},
             assessment_type=assessment_type
         )
+        _t['convergence_end'] = time.time()
 
         # 信息不足拦截：必须在 best_solution 检查之前，因为信息不足可能导致收敛失败
         if convergence_result and convergence_result.get('insufficient_input') and retry_count == 0:
@@ -768,9 +775,11 @@ def assess():
 
         # 3. 计算 HAY 评分和职级
         print("[步骤2] 计算HAY评分...")
+        _t['hay_start'] = time.time()
         hay_result = calculate_hay_evaluation(factors)
         job_grade = hay_result['summary'].get('job_grade', 14)
         total_score = hay_result['summary'].get('total_score', 0)
+        _t['hay_end'] = time.time()
 
         # 学生版：职级下限兜底到 9
         if job_grade < 9:
@@ -778,6 +787,7 @@ def assess():
 
         # 4. 查询薪酬
         print("[步骤3] 查询薪酬...")
+        _t['salary_start'] = time.time()
         salary_result = None
         if salary_calculator:
             try:
@@ -801,17 +811,22 @@ def assess():
 
         adj_low, adj_high = apply_student_coefficients(base_low, base_high, school_tier, education_level)
         salary_range = format_salary_k(adj_low, adj_high)
+        _t['salary_end'] = time.time()
         print(f"[学生版] 薪酬: 基础{base_low:.0f}-{base_high:.0f}万/年 × {school_tier}/{education_level} → 月{salary_range}")
 
         # 5. 8因素 → 8能力维度映射
         print("[步骤4] 能力映射...")
+        _t['ability_start'] = time.time()
         abilities = map_factors_to_dimensions(factors)
         radar_data = get_dimension_radar_data(abilities)
         ability_summary = get_dimension_summary(abilities)
+        _t['ability_end'] = time.time()
 
         # 6. 生成趣味标签（学生版：传入 total_score 用于子档判定）
         print("[步骤5] 生成趣味标签...")
+        _t['tag_start'] = time.time()
         level_tag, level_desc = get_level_tag_and_desc(job_grade, factors, abilities, total_score=total_score)
+        _t['tag_end'] = time.time()
 
         # 7. AI 深度评估已移除（功能由聊天 Agent 承接）
         is_insufficient = bool(convergence_result and convergence_result.get('insufficient_input'))
@@ -852,6 +867,7 @@ def assess():
         # 返回结果
         # ===========================================
 
+        _t['db_start'] = time.time()
         # 结构化使用记录摘要
         elapsed_time = time.time() - start_time
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -929,13 +945,18 @@ def assess():
             'logId': log_id,
         }
 
+        _t['db_end'] = time.time()
+
         # 等待简历拆分完成（最多额外等5秒，通常收敛期间已完成）
+        _t['split_wait_start'] = time.time()
         split_thread.join(timeout=5)
+        _t['split_wait_end'] = time.time()
         if _sections_result[0]:
             response_data['resumeSections'] = _sections_result[0]
             print(f"[评估] 简历拆分完成，{len(_sections_result[0])} 个段落已附带返回")
 
         # 如果前端传了 userId，同步存入 Supabase assessments 表
+        _t['supabase_start'] = time.time()
         user_id = data.get('userId')
         if user_id and supabase_client:
             try:
@@ -953,6 +974,36 @@ def assess():
                 print(f"[Supabase] 评估记录已存入 assessments 表 (user={user_id[:8]}...)")
             except Exception as sb_err:
                 print(f"[Supabase] 评估存储失败: {sb_err}")
+        _t['supabase_end'] = time.time()
+
+        # ===========================================
+        # 分步耗时汇总
+        # ===========================================
+        _t['total_end'] = time.time()
+        _total = _t['total_end'] - _t['total_start']
+        _conv = _t['convergence_end'] - _t['convergence_start']
+        _hay = _t['hay_end'] - _t['hay_start']
+        _sal = _t['salary_end'] - _t['salary_start']
+        _abi = _t['ability_end'] - _t['ability_start']
+        _tag = _t['tag_end'] - _t['tag_start']
+        _db = _t['db_end'] - _t['db_start']
+        _split_wait = _t['split_wait_end'] - _t['split_wait_start']
+        _split_total = (_split_timing[1] - _split_timing[0]) if _split_timing[1] > 0 else 0
+        _supa = _t['supabase_end'] - _t['supabase_start']
+
+        print(f"\n{'=' * 60}")
+        print(f"⏱️  分步耗时汇总（总计 {_total:.2f}s）")
+        print(f"{'=' * 60}")
+        print(f"  1. 增量收敛引擎（含LLM调用）: {_conv:.2f}s  ← {'⚠️ 瓶颈!' if _conv > 5 else '✓'}")
+        print(f"  2. HAY评分计算:               {_hay:.3f}s")
+        print(f"  3. 薪酬查询+系数:             {_sal:.3f}s")
+        print(f"  4. 能力维度映射:               {_abi:.3f}s")
+        print(f"  5. 趣味标签生成:               {_tag:.3f}s")
+        print(f"  6. PostgreSQL日志写入:          {_db:.2f}s  ← {'⚠️ 慢!' if _db > 1 else '✓'}")
+        print(f"  7. 等待简历拆分线程:            {_split_wait:.2f}s  ← {'⚠️ 额外等待!' if _split_wait > 0.5 else '✓ 已在收敛期间完成'}")
+        print(f"     └─ 简历拆分LLM总耗时:       {_split_total:.2f}s（后台并行）")
+        print(f"  8. Supabase存储:               {_supa:.2f}s  ← {'⚠️ 慢!' if _supa > 1 else '✓'}")
+        print(f"{'=' * 60}\n")
 
         return jsonify({'success': True, 'data': response_data}), 200
 
