@@ -160,6 +160,16 @@ class Config:
     # ===========================================
 
     @property
+    def DEEPSEEK_API_KEY(self) -> Optional[str]:
+        """DeepSeek API Key（专用于 PK 档位判断）"""
+        return os.getenv('DEEPSEEK_API_KEY')
+
+    @property
+    def DEEPSEEK_MODEL(self) -> str:
+        """DeepSeek 模型名称"""
+        return os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+
+    @property
     def GLM_API_KEY(self) -> Optional[str]:
         """智谱 GLM API Key"""
         return os.getenv('GLM_API_KEY')

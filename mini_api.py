@@ -524,9 +524,25 @@ if model_router and model_router.glm_client:
             model=model_router.glm_model
         )
         print(f"✓ LLM服务初始化成功（GLM 模型: {model_router.glm_model}）")
-        llm_service_pk = llm_service
+        llm_service_pk = llm_service  # 默认用 GLM，下面尝试用 DeepSeek 覆盖
     except Exception as e:
         print(f"✗ GLM LLM服务初始化失败: {e}")
+
+# PK 专用 LLM 服务 — 优先使用 DeepSeek（判断 PK 档位更准确）
+if config.DEEPSEEK_API_KEY:
+    try:
+        from openai import OpenAI as _OpenAI
+        _ds_client = _OpenAI(
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com"
+        )
+        llm_service_pk = LLMService(
+            client=_ds_client,
+            model=config.DEEPSEEK_MODEL
+        )
+        print(f"✓ PK专用LLM服务初始化成功（DeepSeek 模型: {config.DEEPSEEK_MODEL}）")
+    except Exception as e:
+        print(f"⚠ DeepSeek 初始化失败，PK判断继续使用 GLM: {e}")
 
 if llm_service is None:
     print("✗ LLM服务初始化失败: GLM 未配置，请设置 GLM_API_KEY 环境变量")

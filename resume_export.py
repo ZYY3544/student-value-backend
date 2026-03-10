@@ -616,9 +616,15 @@ def _generate_simple_pdf(resume_sections: list, user_name: str = '') -> io.Bytes
 
         pdf.set_font_size(10)
         if title:
-            pdf.set_font(style='B')
-            pdf.cell(0, 6, title, ln=True)
-            pdf.set_font(style='')
+            if font_added:
+                # CJK 字体没有 Bold 变体，用稍大字号模拟加粗
+                pdf.set_font_size(11)
+                pdf.cell(0, 6, title, ln=True)
+                pdf.set_font_size(10)
+            else:
+                pdf.set_font(style='B')
+                pdf.cell(0, 6, title, ln=True)
+                pdf.set_font(style='')
 
         if content:
             for line in content.split('\n'):
