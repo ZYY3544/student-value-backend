@@ -1389,6 +1389,7 @@ def chat_edit_action():
         section_id = data.get('sectionId', '')
         action = data.get('action', '')
         suggested_text = data.get('suggestedText', '')
+        original_text = data.get('originalText', '')
 
         if not session_id or not section_id or action not in ('accept', 'reject'):
             return jsonify({'success': False, 'error': '参数不完整'}), 400
@@ -1413,8 +1414,14 @@ def chat_edit_action():
         memory = session.get('memory')
 
         if action == 'accept':
-            # 更新 section content
-            resume_sections[idx]['content'] = suggested_text
+            # 定向替换：用 original_text 定位并替换为 suggested_text
+            if original_text and original_text in resume_sections[idx]['content']:
+                resume_sections[idx]['content'] = resume_sections[idx]['content'].replace(
+                    original_text, suggested_text, 1
+                )
+            elif suggested_text:
+                # 降级：无法定位原文，直接替换整段
+                resume_sections[idx]['content'] = suggested_text
             chat_agent.session_manager.update_session(session_id, {
                 'resume_sections': resume_sections
             })
@@ -1432,6 +1439,58 @@ def chat_edit_action():
 
     except Exception as e:
         print(f"[Agent API] /chat/edit-action 失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat/section-update', methods=['POST'])
+def chat_section_update():
+    """
+    用户手动编辑简历段落内容（自动保存）
+
+    请求体:
+    {
+        "sessionId": "uuid",
+        "sectionId": "section-0",
+        "content": "更新后的段落文本"
+    }
+    """
+    if not chat_agent:
+        return jsonify({'success': False, 'error': 'Agent 服务未初始化'}), 503
+
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId', '')
+        section_id = data.get('sectionId', '')
+        content = data.get('content', '')
+
+        if not session_id or not section_id:
+            return jsonify({'success': False, 'error': '参数不完整'}), 400
+
+        session = chat_agent.session_manager.get_session(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在或已过期'}), 404
+
+        resume_sections = session.get('resume_sections')
+        if not resume_sections:
+            return jsonify({'success': False, 'error': '简历段落数据不存在'}), 400
+
+        try:
+            idx = int(section_id.replace('section-', ''))
+        except ValueError:
+            return jsonify({'success': False, 'error': '无效的 sectionId'}), 400
+
+        if idx < 0 or idx >= len(resume_sections):
+            return jsonify({'success': False, 'error': 'sectionId 超出范围'}), 400
+
+        resume_sections[idx]['content'] = content
+        chat_agent.session_manager.update_session(session_id, {
+            'resume_sections': resume_sections
+        })
+
+        return jsonify({'success': True, 'data': {'sectionId': section_id}}), 200
+
+    except Exception as e:
+        print(f"[Agent API] /chat/section-update 失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
