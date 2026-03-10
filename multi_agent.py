@@ -276,8 +276,16 @@ class DiagnosisAgent:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
+            import traceback
             print(f"[DiagnosisAgent] 诊断生成失败: {e}")
-            return "你好！我已经看过你的评测结果和简历了。准备好了就告诉我，我们可以开始优化简历。"
+            traceback.print_exc()
+            # 兜底：基于评测数据拼一个还算个性化的开场白
+            job_title = assessment_context.get("jobTitle", "")
+            title_part = f"，看到你的目标是**{job_title}**方向" if job_title else ""
+            return (
+                f"嗨，我是 Sparky！已经看过你的评测结果和简历了{title_part}。"
+                "我可以帮你优化简历、按目标 JD 定制改写、搜索岗位信息，你想先从哪里开始？"
+            )
 
     def _build_input(self, ctx: dict, resume_text: str) -> str:
         """构建诊断 Agent 的输入"""
