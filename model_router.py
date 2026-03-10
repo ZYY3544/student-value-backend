@@ -426,12 +426,11 @@ class BedrockOpenAIClient:
 
 class ModelRouter:
     """
-    模型路由器 - 根据用户用量自动切换 Sonnet → GLM
+    模型路由器 - 统一使用 GLM，Sonnet 仅作为备用
 
     策略：
-    1. 检查用户 Sonnet 累计费用
-    2. < 预算上限 → 使用 Sonnet
-    3. >= 预算上限 → 切换到 GLM
+    1. 优先使用 GLM（默认 glm-5）
+    2. GLM 不可用时回退 Sonnet
     """
 
     def __init__(self, usage_tracker: UsageTracker):
@@ -470,34 +469,23 @@ class ModelRouter:
 
     def get_client_for_user(self, user_id: str) -> tuple:
         """
-        根据用户用量返回合适的 (client, model, provider)
+        根据用户返回合适的 (client, model, provider)
+
+        当前策略：统一使用 GLM，Sonnet 仅作为备用
 
         Returns:
             (client, model_name, provider_name)
         """
-        # 无 user_id → 默认用 GLM（避免匿名用户消耗 Sonnet 预算）
-        if not user_id:
-            if self.glm_client:
-                return self.glm_client, self.glm_model, "glm"
-            if self.sonnet_client:
-                return self.sonnet_client, self.sonnet_model, "sonnet"
-            raise RuntimeError("无可用的聊天 LLM 模型（Sonnet 和 GLM 均未配置）")
-
-        # 有 Sonnet 且预算未超
-        if self.sonnet_client:
-            current_cost = self.usage_tracker.get_user_sonnet_cost(user_id)
-            if current_cost < self.budget:
-                remaining = self.budget - current_cost
-                print(f"[ModelRouter] 用户 {user_id[:8]}... 使用 Sonnet (已用 ¥{current_cost:.4f}, 剩余 ¥{remaining:.4f})")
-                return self.sonnet_client, self.sonnet_model, "sonnet"
-            else:
-                print(f"[ModelRouter] 用户 {user_id[:8]}... Sonnet 预算已用完 (¥{current_cost:.4f} >= ¥{self.budget}), 切换到 GLM")
-
-        # Sonnet 不可用或预算已超 → GLM
+        # 优先使用 GLM
         if self.glm_client:
             return self.glm_client, self.glm_model, "glm"
 
-        raise RuntimeError("无可用的 LLM 模型（Sonnet 预算已耗尽且 GLM 未配置）")
+        # GLM 不可用时回退 Sonnet
+        if self.sonnet_client:
+            print(f"[ModelRouter] GLM 不可用，回退到 Sonnet")
+            return self.sonnet_client, self.sonnet_model, "sonnet"
+
+        raise RuntimeError("无可用的 LLM 模型（GLM 和 Sonnet 均未配置）")
 
     def record_usage(self, user_id: str, provider: str, model: str,
                      input_tokens: int, output_tokens: int):
