@@ -39,6 +39,7 @@ from openai import OpenAI
 
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, PlanningAgent
 from tool_executor import ToolExecutor
+from utils import safe_json_parse
 
 # Supabase 客户端（延迟导入，可能未安装）
 _supabase_client = None
@@ -460,7 +461,7 @@ class HistoryCompressor:
                 response_format={"type": "json_object"}
             )
 
-            result = json.loads(response.choices[0].message.content)
+            result = safe_json_parse(response.choices[0].message.content)
 
             if result.get("agreed_modification"):
                 memory.add_agreed_modification(result["agreed_modification"])
@@ -537,7 +538,7 @@ class ReflectionChecker:
                 max_tokens=300,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(response.choices[0].message.content)
+            result = safe_json_parse(response.choices[0].message.content)
             if result.get("has_hallucination"):
                 print(f"[ReflectionChecker] 检测到幻觉: {result.get('issues', [])}")
             else:
@@ -591,7 +592,7 @@ def split_resume_sections(client: OpenAI, model: str, resume_text: str) -> List[
         )
 
         content = response.choices[0].message.content
-        result = json.loads(content)
+        result = safe_json_parse(content)
 
         # 兼容 LLM 返回 {"sections": [...]} 或直接 [...]
         if isinstance(result, dict):

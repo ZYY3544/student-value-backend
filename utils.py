@@ -7,7 +7,88 @@
 """
 
 from contextlib import contextmanager
+import json
+import re
 import os
+
+
+# ===========================================
+# LLM JSON 输出清洗工具
+# ===========================================
+
+def clean_json_content(content: str) -> str:
+    """
+    从 LLM 响应中提取纯 JSON 文本
+
+    处理以下情况：
+    1. 前面有说明文字："好的，这是结果：{...}"
+    2. 包含在 Markdown 代码块中：```json{...}```
+    3. 前后有空白字符或注释
+
+    Returns:
+        清洗后的纯 JSON 字符串
+
+    Raises:
+        ValueError: 无法解析为有效JSON时抛出
+    """
+    # 方法0：直接解析
+    try:
+        json.loads(content.strip())
+        return content.strip()
+    except json.JSONDecodeError:
+        pass
+
+    # 方法1：Markdown 代码块
+    matches = re.findall(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL | re.IGNORECASE)
+    if matches:
+        cleaned = matches[0].strip()
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            pass
+
+    # 方法2：第一个 { 到最后一个 }
+    brace_start = content.find('{')
+    brace_end = content.rfind('}')
+    if brace_start != -1 and brace_end > brace_start:
+        cleaned = content[brace_start:brace_end + 1]
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            pass
+
+    # 方法3：第一个 [ 到最后一个 ]（JSON 数组）
+    bracket_start = content.find('[')
+    bracket_end = content.rfind(']')
+    if bracket_start != -1 and bracket_end > bracket_start:
+        cleaned = content[bracket_start:bracket_end + 1]
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            pass
+
+    content_preview = content[:200] + "..." if len(content) > 200 else content
+    raise ValueError(f"无法从LLM响应中提取有效JSON\n原始内容预览:\n{content_preview}")
+
+
+def safe_json_parse(content: str) -> dict:
+    """
+    安全解析 LLM 返回的 JSON（带清洗）
+
+    Args:
+        content: LLM 返回的原始文本
+
+    Returns:
+        解析后的 dict/list
+
+    Raises:
+        ValueError: 无法解析为有效JSON
+    """
+    cleaned = clean_json_content(content)
+    return json.loads(cleaned)
 
 
 # ===========================================

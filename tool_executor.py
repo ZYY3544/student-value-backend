@@ -17,6 +17,7 @@ from html.parser import HTMLParser
 from typing import Optional
 
 import requests
+from utils import safe_json_parse
 
 
 class ToolExecutor:
@@ -219,7 +220,7 @@ class ToolExecutor:
                 temperature=0.5,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(response.choices[0].message.content.strip())
+            result = safe_json_parse(response.choices[0].message.content)
             # 移除 LLM 可能编造的链接字段
             for item in result.get("results", []):
                 for link_key in ("link", "href", "url"):
@@ -455,9 +456,9 @@ class ToolExecutor:
                 response_format={"type": "json_object"},
             )
 
-            result_text = response.choices[0].message.content.strip()
-            # 验证 JSON 合法性
-            result = json.loads(result_text)
+            result_text = response.choices[0].message.content
+            # 验证 JSON 合法性（带清洗）
+            result = safe_json_parse(result_text)
             return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
@@ -659,7 +660,7 @@ class ToolExecutor:
                 temperature=0.4,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(response.choices[0].message.content.strip())
+            result = safe_json_parse(response.choices[0].message.content)
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             print(f"[ToolExecutor] 一站式定制失败: {e}")
@@ -790,7 +791,7 @@ class ToolExecutor:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(response.choices[0].message.content.strip())
+            result = safe_json_parse(response.choices[0].message.content)
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             print(f"[ToolExecutor] 真伪识别失败: {e}")
@@ -867,7 +868,7 @@ class ToolExecutor:
                 temperature=0.3,
                 response_format={"type": "json_object"},
             )
-            result = json.loads(response.choices[0].message.content.strip())
+            result = safe_json_parse(response.choices[0].message.content)
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             print(f"[ToolExecutor] 多JD对比失败: {e}")

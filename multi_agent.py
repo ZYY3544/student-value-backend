@@ -17,6 +17,7 @@
 import json
 from typing import Optional, Generator, List, Dict
 from openai import OpenAI
+from utils import safe_json_parse
 
 
 # ===========================================
@@ -460,7 +461,7 @@ class PlanningAgent:
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content.strip()
-            plan = json.loads(content)
+            plan = safe_json_parse(content)
             print(f"[PlanningAgent] 优化计划生成成功，共 {len(plan.get('plan_items', []))} 条建议")
             return plan
         except Exception as e:
@@ -1150,9 +1151,9 @@ EDIT>>>
         parts = []
 
         if conversation_summary:
-            parts.append(f"<conversation_summary>\n{conversation_summary}\n</conversation_summary>")
+            parts.append(f"=== 对话摘要 ===\n{conversation_summary}\n=== /对话摘要 ===")
 
-        parts.append(f"""<assessment>
+        parts.append(f"""=== 评测结果 ===
 学历: {ctx.get('educationLevel', '未知')} | 专业: {ctx.get('major', '未知')}
 意向城市: {ctx.get('city', '未知')} | 意向行业: {ctx.get('industry', '未知')}
 企业性质: {ctx.get('companyType', '未知')} | 意向企业: {ctx.get('targetCompany', '未知')}
@@ -1164,17 +1165,17 @@ EDIT>>>
 
 8维能力:
 {abilities_text}
-</assessment>""")
+=== /评测结果 ===""")
 
-        parts.append(f"<resume>\n{resume_preview}\n</resume>")
+        parts.append(f"=== 简历原文 ===\n{resume_preview}\n=== /简历原文 ===")
 
         if memory_context:
-            parts.append(f"<memory>\n{memory_context}\n</memory>")
+            parts.append(f"=== 记忆上下文 ===\n{memory_context}\n=== /记忆上下文 ===")
 
         if optimization_plan:
             try:
                 plan_text = json.dumps(optimization_plan, ensure_ascii=False, indent=2)
-                parts.append(f"<optimization_plan>\n{plan_text}\n</optimization_plan>")
+                parts.append(f"=== 优化计划 ===\n{plan_text}\n=== /优化计划 ===")
             except (TypeError, ValueError):
                 pass
 

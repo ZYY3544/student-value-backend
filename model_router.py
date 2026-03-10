@@ -421,6 +421,56 @@ class BedrockOpenAIClient:
 
 
 # ===========================================
+# GLM 兼容层
+# ===========================================
+# 包装 GLM 的 OpenAI 客户端，处理 response_format 等参数兼容性
+
+class _GLMCompletions:
+    """包装 chat.completions，处理 GLM 不支持的参数"""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def create(self, **kwargs):
+        try:
+            return self._inner.create(**kwargs)
+        except Exception as e:
+            err_msg = str(e).lower()
+            # 如果 response_format 导致报错，去掉后重试
+            if 'response_format' in kwargs and (
+                'response_format' in err_msg
+                or 'unsupported' in err_msg
+                or 'invalid' in err_msg
+            ):
+                print(f"[GLM兼容层] response_format 不受支持，去掉后重试")
+                kwargs.pop('response_format')
+                return self._inner.create(**kwargs)
+            raise
+
+
+class _GLMChat:
+    def __init__(self, completions):
+        self.completions = completions
+
+
+class GLMCompatibleClient:
+    """
+    GLM OpenAI 兼容客户端包装器
+
+    处理 GLM API 与 OpenAI API 的差异：
+    - response_format 参数：GLM 可能不支持，自动降级
+    - 其余属性透传到原始客户端
+    """
+
+    def __init__(self, inner_client):
+        self._inner = inner_client
+        self.chat = _GLMChat(_GLMCompletions(inner_client.chat.completions))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+# ===========================================
 # 模型路由器
 # ===========================================
 
@@ -451,16 +501,17 @@ class ModelRouter:
             except Exception as e:
                 print(f"[ModelRouter] Sonnet 客户端初始化失败: {e}")
 
-        # 初始化 GLM 客户端 (OpenAI 兼容接口)
+        # 初始化 GLM 客户端 (OpenAI 兼容接口，带兼容层)
         self.glm_client = None
         self.glm_model = config.GLM_MODEL
         if config.GLM_API_KEY:
             try:
                 from openai import OpenAI
-                self.glm_client = OpenAI(
+                raw_client = OpenAI(
                     api_key=config.GLM_API_KEY,
                     base_url=config.GLM_BASE_URL
                 )
+                self.glm_client = GLMCompatibleClient(raw_client)
                 print(f"[ModelRouter] GLM 客户端初始化成功 (model={self.glm_model})")
             except Exception as e:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
