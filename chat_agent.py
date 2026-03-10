@@ -1091,7 +1091,7 @@ class ChatAgent:
         city = ctx.get("city", "未知")
         job_title = ctx.get("jobTitle", "未知")
 
-        # 构建8维能力得分文本
+        # 构建5维能力得分文本
         abilities_lines = []
         for name, info in abilities.items():
             score_10 = info.get("score", 50) / 10  # 百分制转十分制
@@ -1132,7 +1132,7 @@ class ChatAgent:
 - 预计月薪估值区间：{salary_range}
 - 学历：{ctx.get('educationLevel', '未知')} | 专业：{ctx.get('major', '未知')}
 - 意向行业：{ctx.get('industry', '未知')} | 企业性质：{ctx.get('companyType', '未知')}
-- 8维能力得分（满分10分）：
+- 5维能力得分（满分10分）：
 {abilities_text}
 
 ## 原始简历内容

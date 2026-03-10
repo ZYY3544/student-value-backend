@@ -83,11 +83,11 @@ MOCK_ASSESSMENT = {
         "nature_of_impact": "III",
     },
     "abilities": {
-        "专业深度": {"score": 55, "level": "中等"},
-        "管理协作": {"score": 35, "level": "较低"},
-        "沟通影响": {"score": 45, "level": "中等"},
-        "分析决策": {"score": 50, "level": "中等"},
-        "业务驱动": {"score": 30, "level": "较低"},
+        "专业力": {"score": 55, "level": "medium"},
+        "管理力": {"score": 35, "level": "low"},
+        "合作力": {"score": 45, "level": "medium"},
+        "思辨力": {"score": 50, "level": "medium"},
+        "创新力": {"score": 30, "level": "low"},
     },
 }
 

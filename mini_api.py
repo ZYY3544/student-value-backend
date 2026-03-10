@@ -993,16 +993,13 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
     adj_low, adj_high = apply_student_coefficients(base_low, base_high, school_tier, education_level)
     salary_range = format_salary_k(adj_low, adj_high)
 
-    # 默认能力（8维度）
+    # 默认能力（5维度）
     default_abilities = {
-        "知识深度": {"score": 55, "level": "medium", "grade": "", "explanation": "具备扎实的专业基础"},
-        "统筹能力": {"score": 45, "level": "medium", "grade": "", "explanation": "能够管理自己的工作任务"},
-        "沟通影响": {"score": 55, "level": "medium", "grade": "", "explanation": "能够在团队内部有效沟通"},
-        "问题复杂度": {"score": 50, "level": "medium", "grade": "", "explanation": "能够在清晰的框架下分析和解决问题"},
-        "创新思维": {"score": 45, "level": "medium", "grade": "", "explanation": "能够在现有框架下完成工作"},
-        "决策自主性": {"score": 45, "level": "medium", "grade": "", "explanation": "在明确指引下执行工作"},
-        "影响规模": {"score": 40, "level": "low", "grade": "", "explanation": "工作成果主要影响个人或小团队"},
-        "贡献类型": {"score": 45, "level": "medium", "grade": "", "explanation": "以辅助和支持性贡献为主"},
+        "专业力": {"score": 55, "level": "medium", "explanation": "具备扎实的专业基础，能够独立完成常规专业工作"},
+        "管理力": {"score": 45, "level": "medium", "explanation": "能够管理自己的工作任务，配合团队完成目标"},
+        "合作力": {"score": 50, "level": "medium", "explanation": "能够在团队内部有效沟通，配合完成协作任务"},
+        "思辨力": {"score": 50, "level": "medium", "explanation": "能够按照既定框架分析和解决问题"},
+        "创新力": {"score": 45, "level": "medium", "explanation": "能够在现有框架下完成工作，学习新事物"},
     }
 
     return jsonify({
