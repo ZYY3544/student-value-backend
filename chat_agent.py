@@ -814,39 +814,9 @@ class ChatAgent:
 
         threading.Thread(target=_bg_plan, daemon=True).start()
 
-        # ===== 个性化开场白 =====
-        print(f"[Orchestrator] 生成个性化开场白")
-
-        # 从评测数据提取个性化信息
-        job_title = assessment_context.get("jobTitle", "")
-        city = assessment_context.get("city", "")
-        abilities = assessment_context.get("abilities", {})
-
-        # 找出最强能力维度
-        strongest = ""
-        if isinstance(abilities, dict) and abilities:
-            sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get("score", 0), reverse=True)
-            if sorted_abs:
-                strongest = sorted_abs[0][0]
-
-        # 个性化建议（基于评测数据）
-        personalized_tip = ""
-        if strongest and job_title:
-            personalized_tip = f"\n\n从评测来看，你的**{strongest}**很突出，我们可以重点在简历中强化这个优势，让它跟**{job_title}**的要求精准匹配。"
-        elif job_title:
-            personalized_tip = f"\n\n你的目标是**{job_title}**方向，我可以帮你搜一下这个方向的岗位要求，然后针对性地改简历。"
-
-        greeting = (
-            "Hello，我是你的专属求职伙伴 Sparky，我已经仔细看过你的评测结果和简历内容啦，接下来我可以帮你做这些事情：\n"
-            "1. **简历优化** - 让简历内容更清晰、亮点更突出\n"
-            "2. **JD 定制改写** - 给我一个 JD，我直接帮你把简历改成匹配版\n"
-            "3. **岗位搜索** - 搜索市场岗位，帮你识别真假信息\n"
-            "4. **多岗位对比** - 同时对比多个岗位，看哪个最适合你\n"
-            "5. **多版本管理** - 针对不同公司维护不同版本简历\n"
-            "6. **方向探索** - 如果你还不确定方向，我帮你一起想"
-            f"{personalized_tip}\n\n"
-            "你想先试试哪一项？"
-        )
+        # ===== 个性化开场白（由 DiagnosisAgent 生成） =====
+        print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
+        greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
 
         # 保存到对话历史
         self.session_manager.add_message(session_id, "user", "你好，帮我看看简历怎么改")
