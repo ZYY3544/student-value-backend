@@ -778,6 +778,10 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 已注入跨会话记忆")
 
+        # ===== 个性化开场白（优先执行，避免与后台任务并发触发 GLM 限流） =====
+        print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
+        greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
+
         # 后台任务共用的 client/model（提前绑定，避免分支遗漏）
         _bg_client, _bg_model = active_client, active_model
 
@@ -814,10 +818,6 @@ class ChatAgent:
                 print(f"[Orchestrator] 优化计划生成失败（后台，不影响正常使用）: {e}")
 
         threading.Thread(target=_bg_plan, daemon=True).start()
-
-        # ===== 个性化开场白（由 DiagnosisAgent 生成） =====
-        print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
-        greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
 
         # 保存到对话历史
         self.session_manager.add_message(session_id, "user", "你好，帮我看看简历怎么改")
