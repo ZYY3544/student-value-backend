@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify, Response, send_from_directory, send_f
 from flask_cors import CORS
 from config import config
 from llm_service import LLMService
-from chat_agent import ChatAgent
+from chat_agent import ChatAgent, split_resume_sections
 from model_router import ModelRouter, UsageTracker
 from incremental_convergence import IncrementalConvergence
 from validation_rules import validation_rules
@@ -702,6 +702,18 @@ def assess():
         # 核心评估流程
         # ===========================================
 
+        # 0. 并行启动简历结构拆分（利用收敛引擎等待时间）
+        _sections_result = [None]
+        def _bg_split_assess():
+            try:
+                _sections_result[0] = split_resume_sections(
+                    model_router.glm_client, model_router.glm_model, resume_text
+                )
+            except Exception as e:
+                print(f"[评估] 简历拆分失败（不影响评估）: {e}")
+        split_thread = threading.Thread(target=_bg_split_assess, daemon=True)
+        split_thread.start()
+
         # 1. 增量收敛引擎分析
         print("[步骤1] 增量收敛分析...")
         convergence_result = convergence_engine.find_optimal_solution(
@@ -916,6 +928,12 @@ def assess():
             'factors': factors,
             'logId': log_id,
         }
+
+        # 等待简历拆分完成（最多额外等5秒，通常收敛期间已完成）
+        split_thread.join(timeout=5)
+        if _sections_result[0]:
+            response_data['resumeSections'] = _sections_result[0]
+            print(f"[评估] 简历拆分完成，{len(_sections_result[0])} 个段落已附带返回")
 
         # 如果前端传了 userId，同步存入 Supabase assessments 表
         user_id = data.get('userId')
@@ -1176,11 +1194,13 @@ def chat_start():
         # 创建会话并生成开场白
         user_id = data.get('userId')
         assessment_id = data.get('assessmentId')
+        resume_sections = data.get('resumeSections')  # 评测阶段预拆分的段落
         result = chat_agent.start_session(
             assessment_context=assessment_context,
             resume_text=resume_text,
             user_id=user_id,
             assessment_id=assessment_id,
+            resume_sections=resume_sections,
         )
 
         print(f"[Agent API] 会话已创建: {result['session_id'][:8]}...")

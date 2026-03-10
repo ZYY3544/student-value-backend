@@ -699,7 +699,8 @@ class ChatAgent:
         return client, model, provider
 
     def start_session(self, assessment_context: dict, resume_text: str,
-                      user_id: str = None, assessment_id: str = None) -> dict:
+                      user_id: str = None, assessment_id: str = None,
+                      resume_sections: list = None) -> dict:
         """
         开启新的对话会话
 
@@ -777,20 +778,25 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 已注入跨会话记忆")
 
-        # 后台线程拆分简历（真正不阻塞开场）
-        # 捕获当前 client/model 到闭包，确保线程安全
-        _bg_client, _bg_model = active_client, active_model
+        # 简历结构拆分：如果评测阶段已预拆分，直接使用；否则后台线程拆分
+        if resume_sections and isinstance(resume_sections, list) and len(resume_sections) > 0:
+            self.session_manager.update_session(session_id, {
+                "resume_sections": resume_sections
+            })
+            print(f"[Orchestrator] 使用预拆分简历段落（{len(resume_sections)} 段），跳过 LLM 拆分")
+        else:
+            _bg_client, _bg_model = active_client, active_model
 
-        def _bg_split():
-            try:
-                sections = split_resume_sections(_bg_client, _bg_model, resume_text)
-                self.session_manager.update_session(session_id, {
-                    "resume_sections": sections
-                })
-            except Exception as e:
-                print(f"[Orchestrator] 简历拆分失败（后台）: {e}")
+            def _bg_split():
+                try:
+                    sections = split_resume_sections(_bg_client, _bg_model, resume_text)
+                    self.session_manager.update_session(session_id, {
+                        "resume_sections": sections
+                    })
+                except Exception as e:
+                    print(f"[Orchestrator] 简历拆分失败（后台）: {e}")
 
-        threading.Thread(target=_bg_split, daemon=True).start()
+            threading.Thread(target=_bg_split, daemon=True).start()
 
         # 后台线程生成优化计划（PlanningAgent）
         _bg_planning = PlanningAgent(_bg_client, _bg_model)
