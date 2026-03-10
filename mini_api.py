@@ -235,6 +235,65 @@ except ImportError:
     print("⚠ Word文档解析不可用 (请安装 python-docx: pip install python-docx)")
 
 
+def _clean_pdf_line_breaks(text: str) -> str:
+    """
+    清理 PDF 提取文本中的硬换行
+
+    PDF 每行有固定宽度，PyMuPDF 会在行尾插入 \\n，
+    导致句子被截断（如 "并制\\n定10页标准化检索流程"）。
+    本函数将同一段落内的断行合并为连续文本。
+    """
+    lines = text.split('\n')
+    merged = []
+    buffer = ''
+
+    for line in lines:
+        stripped = line.strip()
+
+        # 空行 = 段落分隔，flush buffer
+        if not stripped:
+            if buffer:
+                merged.append(buffer)
+                buffer = ''
+            merged.append('')
+            continue
+
+        # 判断是否是新段落的起始（而非断行续接）
+        is_new_paragraph = (
+            # 以 bullet 符号开头
+            stripped[0] in ('•', '·', '►', '▪', '■', '○', '●', '◆', '▸', '※', '-', '–', '—') or
+            # 以数字编号开头（如 "1." "2）" "(3)"）
+            re.match(r'^[\d①②③④⑤⑥⑦⑧⑨⑩]+[.、)）]', stripped) or
+            re.match(r'^[（(]\d+[)）]', stripped) or
+            # 常见简历段落标题关键词
+            re.match(r'^(教育|实习|工作|项目|技能|证书|荣誉|自我|个人|校园|社团|获奖|专业|研究|竞赛)', stripped)
+        )
+
+        if is_new_paragraph:
+            if buffer:
+                merged.append(buffer)
+            buffer = stripped
+        else:
+            # 续接上一行
+            if buffer:
+                # 如果上一行以中文/标点结尾、本行以中文开头，直接拼接（不加空格）
+                # 否则加空格（英文场景）
+                last_char = buffer[-1]
+                first_char = stripped[0]
+                if ('\u4e00' <= last_char <= '\u9fff' or last_char in '，。；：、！？）》"\'') or \
+                   ('\u4e00' <= first_char <= '\u9fff'):
+                    buffer += stripped
+                else:
+                    buffer += ' ' + stripped
+            else:
+                buffer = stripped
+
+    if buffer:
+        merged.append(buffer)
+
+    return '\n'.join(merged)
+
+
 def parse_pdf_from_base64(base64_content: str) -> str:
     """从 Base64 编码的 PDF 中提取文本"""
     if not PDF_SUPPORT:
@@ -259,8 +318,10 @@ def parse_pdf_from_base64(base64_content: str) -> str:
 
         doc.close()
 
-        full_text = "\n".join(text_parts).strip()
-        print(f"[PDF解析] 成功提取 {len(full_text)} 字符")
+        raw_text = "\n".join(text_parts).strip()
+        # 清理 PDF 硬换行，合并同一段落的断行
+        full_text = _clean_pdf_line_breaks(raw_text)
+        print(f"[PDF解析] 成功提取 {len(full_text)} 字符（原始 {len(raw_text)} 字符，清理断行后）")
         return full_text
 
     except Exception as e:
