@@ -926,9 +926,11 @@ EDIT>>>
         """
         流式生成优化建议（支持 Function Call）
 
-        策略：先非流式调用检测是否触发工具，
-        如果触发则执行工具后再流式输出最终回答；
-        如果未触发则直接流式输出。
+        策略：始终用流式调用。流中检测 tool_calls：
+        - 如果检测到工具调用 → 执行工具 → 再次流式调用输出最终回复
+        - 如果没有工具调用 → 直接流式输出（省掉一次 LLM 调用）
+
+        相比之前的 probe + stream 双调用，每轮无工具场景省掉 ~50% token。
 
         Yields:
             逐块文本
@@ -945,40 +947,89 @@ EDIT>>>
             tools_param = OPTIMIZE_AGENT_TOOLS if has_tools else None
 
             if has_tools:
-                # 阶段 1：非流式调用，检测是否触发工具
-                shown_tools = set()  # 跟踪已展示过状态提示的工具类型，避免重复
+                shown_tools = set()
+
                 for round_idx in range(self.MAX_TOOL_ROUNDS):
-                    response = self.client.chat.completions.create(
+                    # 单次流式调用（带工具），同时处理 content 和 tool_calls
+                    # DeepSeek 中 tool_calls 和 content 互斥：
+                    #   - 模型决定调工具 → 流中只有 tool_calls delta，无 content
+                    #   - 模型直接回复 → 流中只有 content delta，无 tool_calls
+                    # 因此可以安全地边流式输出 content，边收集 tool_calls
+                    stream = self.client.chat.completions.create(
                         model=self.model,
                         messages=messages,
                         temperature=self.TEMPERATURE,
                         tools=tools_param,
+                        stream=True,
                     )
 
-                    choice = response.choices[0]
+                    tool_calls_map = {}  # index -> {id, function: {name, arguments}}
+                    has_content = False
+                    finish_reason = None
 
-                    if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
-                        # 有工具调用 → 先逐字输出状态提示，再执行
-                        print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用")
-                        status_msg = self._get_tool_status_message(choice.message.tool_calls, shown_tools)
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        finish_reason = chunk.choices[0].finish_reason or finish_reason
+
+                        # 流式输出文本内容（不触发工具时）
+                        if delta.content:
+                            has_content = True
+                            yield delta.content
+
+                        # 收集 tool_calls（触发工具时，content 为空）
+                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_map:
+                                    tool_calls_map[idx] = {
+                                        "id": "",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                if tc_delta.id:
+                                    tool_calls_map[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        tool_calls_map[idx]["function"]["name"] += tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        tool_calls_map[idx]["function"]["arguments"] += tc_delta.function.arguments
+
+                    # 流结束后判断走向
+                    if tool_calls_map and finish_reason == "tool_calls":
+                        # 工具调用路径
+                        print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用（流式检测）")
+
+                        # 构造兼容对象
+                        class _ToolCall:
+                            def __init__(self, tc_dict):
+                                self.id = tc_dict["id"]
+                                self.function = type('F', (), {
+                                    'name': tc_dict["function"]["name"],
+                                    'arguments': tc_dict["function"]["arguments"],
+                                })()
+
+                        tc_objects = [_ToolCall(tool_calls_map[i]) for i in sorted(tool_calls_map.keys())]
+
+                        status_msg = self._get_tool_status_message(tc_objects, shown_tools)
                         if status_msg:
                             for ch in status_msg:
                                 yield ch
-                        # 记录已展示的工具类型
-                        for tc in choice.message.tool_calls:
+                        for tc in tc_objects:
                             shown_tools.add(tc.function.name)
-                        messages = self._execute_tool_calls(choice.message.tool_calls, messages)
-                        # 工具执行完毕，逐字输出中间提示
+                        messages = self._execute_tool_calls(tc_objects, messages)
                         for ch in "\n\n正在整理结果...\n\n":
                             yield ch
                         continue
                     else:
-                        # 没有工具调用 → break 进入流式输出
-                        break
+                        # 纯文本回复已在上面 yield 完毕，直接返回
+                        print(f"[OptimizeAgent] 流式直出完成（省掉 probe 调用）")
+                        return
 
-                print(f"[OptimizeAgent] 进入流式输出")
+                # 超过最大工具轮次，最终流式输出（不带工具）
+                print(f"[OptimizeAgent] 超过最大工具轮次，最终流式输出")
 
-            # 阶段 2：流式输出最终回复（所有场景统一走这条路径）
+            # 无工具场景 / 工具轮次耗尽后的兜底：纯流式输出
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
