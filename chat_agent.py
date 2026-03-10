@@ -778,6 +778,9 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 已注入跨会话记忆")
 
+        # 后台任务共用的 client/model（提前绑定，避免分支遗漏）
+        _bg_client, _bg_model = active_client, active_model
+
         # 简历结构拆分：如果评测阶段已预拆分，直接使用；否则后台线程拆分
         if resume_sections and isinstance(resume_sections, list) and len(resume_sections) > 0:
             self.session_manager.update_session(session_id, {
@@ -785,8 +788,6 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 使用预拆分简历段落（{len(resume_sections)} 段），跳过 LLM 拆分")
         else:
-            _bg_client, _bg_model = active_client, active_model
-
             def _bg_split():
                 try:
                     sections = split_resume_sections(_bg_client, _bg_model, resume_text)
