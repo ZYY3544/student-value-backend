@@ -1079,11 +1079,7 @@ class ChatAgent:
         ctx = session.get("assessment_context", {})
         job_title = ctx.get("jobTitle", "")
 
-        if len(memory.optimized_sections) >= 1 and job_title:
-            return (
-                f"对了，你的目标是**{job_title}**方向——要不要发一个你感兴趣的 JD 给我？"
-                f"我可以直接帮你把简历按 JD 的要求定制化改写，一步到位！"
-            )
+        # 不再使用固定话术，由 LLM 在对话中自然引导
         return None
 
     def _build_report_analysis_prompt(self, session: dict) -> str:
