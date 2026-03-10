@@ -1202,7 +1202,9 @@ class ChatAgent:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
         except Exception as e:
+            import traceback
             print(f"[Orchestrator] 报告解读生成失败: {e}")
+            traceback.print_exc()
             yield "抱歉，生成报告解读时遇到了问题，请再试一次。"
 
     def chat(self, session_id: str, user_message: str, canvas_mode: bool = False) -> Optional[str]:
