@@ -443,20 +443,6 @@ print("\n" + "=" * 60)
 print("学生版校招身价评估后端服务启动中...")
 print("=" * 60)
 
-# LLM 服务（两个实例：PK提取用 reasoner，深度评估用 chat）
-llm_service = None        # 深度评估用（deepseek-chat，快）
-llm_service_pk = None     # PK提取用（deepseek-reasoner，准）
-try:
-    llm_service = LLMService(
-        api_key=config.DEEPSEEK_API_KEY,
-        model='deepseek-chat'
-    )
-    print("✓ LLM服务初始化成功（chat模型）")
-    llm_service_pk = llm_service
-except Exception as e:
-    print(f"✗ LLM服务初始化失败: {e}")
-    exit(1)
-
 # 模型路由器（Sonnet/GLM 自动切换）
 model_router = None
 usage_tracker = None
@@ -467,12 +453,39 @@ try:
 except Exception as e:
     print(f"⚠ 模型路由器初始化失败（将仅使用 DeepSeek）: {e}")
 
+# LLM 服务（评估引擎用）
+# 优先使用 Sonnet，不可用时回退 DeepSeek
+llm_service = None
+llm_service_pk = None
+if model_router and model_router.sonnet_client:
+    try:
+        llm_service = LLMService(
+            client=model_router.sonnet_client,
+            model=model_router.sonnet_model
+        )
+        print("✓ LLM服务初始化成功（Sonnet 模型 via Bedrock）")
+        llm_service_pk = llm_service
+    except Exception as e:
+        print(f"⚠ Sonnet LLM服务初始化失败，回退 DeepSeek: {e}")
+
+if llm_service is None:
+    try:
+        llm_service = LLMService(
+            api_key=config.DEEPSEEK_API_KEY,
+            model='deepseek-chat'
+        )
+        print("✓ LLM服务初始化成功（DeepSeek chat 模型）")
+        llm_service_pk = llm_service
+    except Exception as e:
+        print(f"✗ LLM服务初始化失败: {e}")
+        exit(1)
+
 # 简历优化 Agent
 chat_agent = None
 try:
     chat_agent = ChatAgent(
         client=llm_service.client,
-        model='deepseek-chat',
+        model=llm_service.model,
         llm_service=llm_service,
         convergence_engine=None,  # 在 convergence_engine 初始化后注入
         model_router=model_router,
@@ -486,7 +499,7 @@ convergence_engine = None
 try:
     convergence_engine = IncrementalConvergence(
         validation_rules=validation_rules,
-        llm_service=llm_service_pk   # 收敛引擎使用 reasoner
+        llm_service=llm_service_pk
     )
     print("✓ 增量收敛引擎初始化成功")
     # 注入到 chat_agent（延迟注入，因为 chat_agent 先于 convergence_engine 初始化）
