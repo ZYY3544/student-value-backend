@@ -164,6 +164,70 @@ class Config:
         return os.getenv('API_DEBUG', 'false').lower() in ('true', '1', 'yes')
 
     # ===========================================
+    # AWS Bedrock (Sonnet) 配置
+    # ===========================================
+
+    @property
+    def AWS_ACCESS_KEY_ID(self) -> Optional[str]:
+        """AWS Access Key ID"""
+        return os.getenv('AWS_ACCESS_KEY_ID')
+
+    @property
+    def AWS_SECRET_ACCESS_KEY(self) -> Optional[str]:
+        """AWS Secret Access Key"""
+        return os.getenv('AWS_SECRET_ACCESS_KEY')
+
+    @property
+    def AWS_REGION(self) -> str:
+        """AWS Region"""
+        return os.getenv('AWS_REGION', 'us-east-1')
+
+    @property
+    def SONNET_MODEL_ID(self) -> str:
+        """AWS Bedrock Sonnet 模型 ID"""
+        return os.getenv('SONNET_MODEL_ID', 'anthropic.claude-sonnet-4-20250514')
+
+    # ===========================================
+    # GLM (智谱) 配置 - 降级备用模型
+    # ===========================================
+
+    @property
+    def GLM_API_KEY(self) -> Optional[str]:
+        """智谱 GLM API Key"""
+        return os.getenv('GLM_API_KEY')
+
+    @property
+    def GLM_MODEL(self) -> str:
+        """GLM 模型名称（如 glm-4-plus、glm-4-flash）"""
+        return os.getenv('GLM_MODEL', 'glm-4-plus')
+
+    @property
+    def GLM_BASE_URL(self) -> str:
+        """GLM API 基础 URL"""
+        return os.getenv('GLM_BASE_URL', 'https://open.bigmodel.cn/api/paas/v4')
+
+    # ===========================================
+    # 用户用量预算配置
+    # ===========================================
+
+    @property
+    def SONNET_BUDGET_PER_USER(self) -> float:
+        """每用户 Sonnet 预算上限（人民币）"""
+        return float(os.getenv('SONNET_BUDGET_PER_USER', '15.0'))
+
+    @property
+    def SONNET_INPUT_PRICE_PER_1K(self) -> float:
+        """Sonnet 输入 token 价格（人民币/千token）"""
+        # Claude Sonnet: ~$3/M input = ¥0.022/千token
+        return float(os.getenv('SONNET_INPUT_PRICE_PER_1K', '0.022'))
+
+    @property
+    def SONNET_OUTPUT_PRICE_PER_1K(self) -> float:
+        """Sonnet 输出 token 价格（人民币/千token）"""
+        # Claude Sonnet: ~$15/M output = ¥0.11/千token
+        return float(os.getenv('SONNET_OUTPUT_PRICE_PER_1K', '0.11'))
+
+    # ===========================================
     # LLM 服务配置
     # ===========================================
 
@@ -196,9 +260,22 @@ class Config:
         errors = []
         warnings = []
 
-        # 检查必需的配置项
+        # 检查 LLM 配置（至少需要一个可用的模型）
+        has_sonnet = self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY
+        has_glm = bool(self.GLM_API_KEY)
+        has_deepseek = bool(self.DEEPSEEK_API_KEY)
+
+        if not has_sonnet and not has_glm and not has_deepseek:
+            errors.append("至少需要配置一个 LLM 提供商（AWS Sonnet / GLM / DeepSeek）")
+
+        if not has_sonnet:
+            warnings.append("AWS Bedrock 未配置，Sonnet 模型不可用")
+        if not has_glm:
+            warnings.append("GLM 未配置，降级模型不可用")
+
+        # 向后兼容：保留 DeepSeek 检查
         if not self.DEEPSEEK_API_KEY:
-            errors.append("缺少 DEEPSEEK_API_KEY 配置")
+            warnings.append("缺少 DEEPSEEK_API_KEY 配置（评估引擎仍需 DeepSeek）")
 
         # 检查验证规则文件（警告，不影响基本功能）
         validation_files = [
@@ -227,6 +304,11 @@ class Config:
         print(f"项目根目录: {self.BASE_DIR}")
         print(f"DeepSeek API Key: {'已配置' if self.DEEPSEEK_API_KEY else '未配置'}")
         print(f"DeepSeek 模型: {self.DEEPSEEK_MODEL}")
+        print(f"AWS Bedrock: {'已配置' if self.AWS_ACCESS_KEY_ID else '未配置'} (Region: {self.AWS_REGION})")
+        print(f"Sonnet 模型: {self.SONNET_MODEL_ID}")
+        print(f"GLM API Key: {'已配置' if self.GLM_API_KEY else '未配置'}")
+        print(f"GLM 模型: {self.GLM_MODEL}")
+        print(f"用户 Sonnet 预算: ¥{self.SONNET_BUDGET_PER_USER}/人")
         print(f"薪酬数据文件: {self.SALARY_CSV_PATH}")
         print(f"  - 文件存在: {os.path.exists(self.SALARY_CSV_PATH)}")
         print(f"API服务地址: {self.API_HOST}:{self.API_PORT}")

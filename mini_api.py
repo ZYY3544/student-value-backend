@@ -13,6 +13,7 @@ from flask_cors import CORS
 from config import config
 from llm_service import LLMService
 from chat_agent import ChatAgent
+from model_router import ModelRouter, UsageTracker
 from incremental_convergence import IncrementalConvergence
 from validation_rules import validation_rules
 from salary_calculator import SalaryCalculator
@@ -456,6 +457,16 @@ except Exception as e:
     print(f"✗ LLM服务初始化失败: {e}")
     exit(1)
 
+# 模型路由器（Sonnet/GLM 自动切换）
+model_router = None
+usage_tracker = None
+try:
+    usage_tracker = UsageTracker(DATABASE_URL)
+    model_router = ModelRouter(usage_tracker)
+    print("✓ 模型路由器初始化成功")
+except Exception as e:
+    print(f"⚠ 模型路由器初始化失败（将仅使用 DeepSeek）: {e}")
+
 # 简历优化 Agent
 chat_agent = None
 try:
@@ -464,6 +475,7 @@ try:
         model='deepseek-chat',
         llm_service=llm_service,
         convergence_engine=None,  # 在 convergence_engine 初始化后注入
+        model_router=model_router,
     )
     print("✓ 简历优化Agent初始化成功")
 except Exception as e:
@@ -1485,6 +1497,44 @@ def user_assessments():
         return jsonify({'success': True, 'data': resp.data}), 200
     except Exception as e:
         print(f"[用户历史] 查询失败: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===========================================
+# 用户 LLM 用量查询 API
+# ===========================================
+
+@app.route('/api/user/usage', methods=['GET'])
+def user_usage():
+    """
+    获取用户的 LLM 用量摘要
+
+    参数: ?userId=uuid
+
+    响应:
+    {
+        "success": true,
+        "data": {
+            "user_id": "...",
+            "sonnet_cost_rmb": 3.5,
+            "sonnet_budget_rmb": 15.0,
+            "sonnet_remaining_rmb": 11.5,
+            "budget_exceeded": false
+        }
+    }
+    """
+    user_id = request.args.get('userId', '')
+    if not user_id:
+        return jsonify({'success': False, 'error': '缺少 userId'}), 400
+
+    if not usage_tracker:
+        return jsonify({'success': False, 'error': '用量追踪未启用'}), 503
+
+    try:
+        summary = usage_tracker.get_user_usage_summary(user_id)
+        return jsonify({'success': True, 'data': summary}), 200
+    except Exception as e:
+        print(f"[用量查询] 查询失败: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

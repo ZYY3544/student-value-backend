@@ -639,11 +639,13 @@ class ChatAgent:
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
     def __init__(self, client: OpenAI, model: str = "deepseek-chat",
-                 llm_service=None, convergence_engine=None):
+                 llm_service=None, convergence_engine=None,
+                 model_router=None):
         self.client = client
         self.model = model
         self.llm_service = llm_service
         self.convergence_engine = convergence_engine
+        self.model_router = model_router  # 多模型路由器（Sonnet/GLM 切换）
         self.session_manager = SessionManager(ttl_seconds=3600)
 
         # 初始化子 Agent（每个 Agent 拥有独立的 Prompt，共享 LLM client）
@@ -658,8 +660,42 @@ class ChatAgent:
         print(f"  - PlanningAgent:  优化规划（温度 {PlanningAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化（温度 {OptimizeAgent.TEMPERATURE}）")
         print(f"  - ReportAgent:    总结报告（温度 {ReportAgent.TEMPERATURE}）")
+        if model_router:
+            print(f"  - ModelRouter:    Sonnet/GLM 自动切换已启用")
         if llm_service and convergence_engine:
             print(f"  - ToolExecutor:   Function Call 工具调用已启用")
+
+    def _resolve_model_for_user(self, user_id: str = None):
+        """
+        根据用户 ID 解析应使用的模型，并更新所有子 Agent
+
+        如果配置了 model_router，则根据用户用量选择 Sonnet 或 GLM；
+        否则回退到默认的 client/model（DeepSeek）。
+
+        Returns:
+            (client, model, provider) 三元组
+        """
+        if not self.model_router:
+            return self.client, self.model, "deepseek"
+
+        try:
+            client, model, provider = self.model_router.get_client_for_user(user_id)
+        except RuntimeError:
+            # 所有模型不可用，回退 DeepSeek
+            print("[Orchestrator] ModelRouter 无可用模型，回退 DeepSeek")
+            return self.client, self.model, "deepseek"
+
+        # 更新所有子 Agent 的 client 和 model
+        self.diagnosis_agent.client = client
+        self.diagnosis_agent.model = model
+        self.planning_agent.client = client
+        self.planning_agent.model = model
+        self.optimize_agent.client = client
+        self.optimize_agent.model = model
+        self.report_agent.client = client
+        self.report_agent.model = model
+
+        return client, model, provider
 
     def start_session(self, assessment_context: dict, resume_text: str,
                       user_id: str = None, assessment_id: str = None) -> dict:
@@ -681,12 +717,18 @@ class ChatAgent:
         Returns:
             {"session_id": "...", "greeting": "..."}
         """
+        # 根据用户解析模型（Sonnet/GLM/DeepSeek）
+        active_client, active_model, active_provider = self._resolve_model_for_user(user_id)
+
         session_id = self.session_manager.create_session(
             assessment_context=assessment_context,
             resume_text=resume_text,
             user_id=user_id,
             assessment_id=assessment_id,
         )
+
+        # 记录当前会话使用的模型提供商
+        self.session_manager.update_session(session_id, {"active_provider": active_provider})
 
         # 为本次会话创建 ToolExecutor 并绑定到 OptimizeAgent
         if self.llm_service and self.convergence_engine:
@@ -735,9 +777,12 @@ class ChatAgent:
             print(f"[Orchestrator] 已注入跨会话记忆")
 
         # 后台线程拆分简历（真正不阻塞开场）
+        # 捕获当前 client/model 到闭包，确保线程安全
+        _bg_client, _bg_model = active_client, active_model
+
         def _bg_split():
             try:
-                sections = split_resume_sections(self.client, self.model, resume_text)
+                sections = split_resume_sections(_bg_client, _bg_model, resume_text)
                 self.session_manager.update_session(session_id, {
                     "resume_sections": sections
                 })
@@ -747,9 +792,11 @@ class ChatAgent:
         threading.Thread(target=_bg_split, daemon=True).start()
 
         # 后台线程生成优化计划（PlanningAgent）
+        _bg_planning = PlanningAgent(_bg_client, _bg_model)
+
         def _bg_plan():
             try:
-                plan = self.planning_agent.generate_plan(assessment_context, resume_text)
+                plan = _bg_planning.generate_plan(assessment_context, resume_text)
                 if plan:
                     self.session_manager.update_session(session_id, {
                         "optimization_plan": plan
@@ -901,6 +948,10 @@ class ChatAgent:
         1. 提取结构化记忆（供下一轮子 Agent 使用）
         2. 判断是否需要压缩对话历史
         """
+        # 捕获当前 client/model 到闭包（线程安全）
+        _pc_client = self.optimize_agent.client  # 使用当前已解析的 client
+        _pc_model = self.optimize_agent.model
+
         def _bg_process():
             session = self.session_manager.get_session(session_id)
             if not session:
@@ -908,7 +959,7 @@ class ChatAgent:
 
             # 1. 提取结构化记忆
             try:
-                HistoryCompressor.extract_memory(self.client, self.model, session)
+                HistoryCompressor.extract_memory(_pc_client, _pc_model, session)
             except Exception as e:
                 print(f"[Orchestrator] 记忆提取失败: {e}")
 
@@ -916,7 +967,7 @@ class ChatAgent:
             if HistoryCompressor.should_compress(session):
                 try:
                     compressed = HistoryCompressor.compress_history(
-                        self.client, self.model, session
+                        _pc_client, _pc_model, session
                     )
                     keep_recent = HistoryCompressor.KEEP_RECENT
                     recent_messages = session["messages"][-keep_recent:]
@@ -945,7 +996,7 @@ class ChatAgent:
                     if has_rewrite and not is_search_reply:
                         resume_text = session.get("resume_text", "")
                         result = ReflectionChecker.check(
-                            self.client, self.model, resume_text, last_reply
+                            _pc_client, _pc_model, resume_text, last_reply
                         )
                         if result and result.get("has_hallucination") and result.get("issues"):
                             self.session_manager.update_session(session_id, {
@@ -965,8 +1016,8 @@ class ChatAgent:
                     )
                     summary_prompt = """请用2-3句话概括以下对话的要点，包括：用户关心什么、给了什么建议、达成了什么共识。
 要求简洁，100字以内。"""
-                    resp = self.client.chat.completions.create(
-                        model=self.model,
+                    resp = _pc_client.chat.completions.create(
+                        model=_pc_model,
                         messages=[
                             {"role": "system", "content": summary_prompt},
                             {"role": "user", "content": conv_text},
@@ -1130,9 +1181,13 @@ class ChatAgent:
         """使用深度分析 prompt 流式生成报告解读"""
         system_prompt = self._build_report_analysis_prompt(session)
 
+        # 使用已解析的 client/model（由 _resolve_model_for_user 更新到子 Agent 上）
+        active_client = self.optimize_agent.client
+        active_model = self.optimize_agent.model
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = active_client.chat.completions.create(
+                model=active_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
@@ -1169,6 +1224,10 @@ class ChatAgent:
         session = self.session_manager.get_session(session_id)
         if not session:
             return None
+
+        # 根据用户解析模型
+        user_id = session.get("user_id")
+        self._resolve_model_for_user(user_id)
 
         # 解析 [ACTION:xxx] 前缀
         action, actual_message = self._parse_action(user_message)
@@ -1313,6 +1372,10 @@ class ChatAgent:
         if not session:
             yield "[ERROR] 会话已过期或不存在"
             return
+
+        # 根据用户解析模型
+        user_id = session.get("user_id")
+        self._resolve_model_for_user(user_id)
 
         # 解析 [ACTION:xxx] 前缀
         action, actual_message = self._parse_action(user_message)
