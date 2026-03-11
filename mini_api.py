@@ -781,21 +781,6 @@ def assess():
         _t = {}  # 各步骤耗时记录
         _t['total_start'] = time.time()
 
-        # 0. 并行启动简历结构拆分（利用收敛引擎等待时间）
-        _sections_result = [None]
-        _split_timing = [0.0, 0.0]  # [start, end]
-        def _bg_split_assess():
-            _split_timing[0] = time.time()
-            try:
-                _sections_result[0] = split_resume_sections(
-                    model_router.glm_client, model_router.glm_model, resume_text
-                )
-            except Exception as e:
-                print(f"[评估] 简历拆分失败（不影响评估）: {e}")
-            _split_timing[1] = time.time()
-        split_thread = threading.Thread(target=_bg_split_assess, daemon=True)
-        split_thread.start()
-
         # 1. 增量收敛引擎分析
         print("[步骤1] 增量收敛分析...")
         _t['convergence_start'] = time.time()
@@ -912,6 +897,31 @@ def assess():
         salary_competitiveness = calculate_salary_competitiveness(job_function, job_grade)
         print(f"[步骤7] 薪酬竞争力: 超过{salary_competitiveness}%的同职能从业者")
 
+        # 8. 生成 Sparky 开场白（DiagnosisAgent，利用评估结果生成个性化欢迎语）
+        _t['greeting_start'] = time.time()
+        _greeting = ''
+        if chat_agent:
+            try:
+                _greeting_ctx = {
+                    'factors': factors,
+                    'abilities': abilities,
+                    'grade': job_grade,
+                    'salaryRange': salary_range,
+                    'jobTitle': job_title,
+                    'jobFunction': job_function,
+                    'educationLevel': education_level,
+                    'major': major,
+                    'city': raw_city,
+                    'industry': industry,
+                    'companyType': company_type,
+                    'targetCompany': target_company,
+                }
+                _greeting = chat_agent.diagnosis_agent.diagnose(_greeting_ctx, resume_text)
+                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字）")
+            except Exception as e:
+                print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
+        _t['greeting_end'] = time.time()
+
         # ===========================================
         # 详细日志输出（验证映射逻辑）
         # ===========================================
@@ -1020,17 +1030,12 @@ def assess():
             # 调试信息（可选，生产环境可移除）
             'factors': factors,
             'logId': log_id,
+
+            # Sparky 开场白（评估阶段预生成，报告页直接显示）
+            'greeting': _greeting,
         }
 
         _t['db_end'] = time.time()
-
-        # 等待简历拆分完成（最多额外等5秒，通常收敛期间已完成）
-        _t['split_wait_start'] = time.time()
-        split_thread.join(timeout=5)
-        _t['split_wait_end'] = time.time()
-        if _sections_result[0]:
-            response_data['resumeSections'] = _sections_result[0]
-            print(f"[评估] 简历拆分完成，{len(_sections_result[0])} 个段落已附带返回")
 
         # 如果前端传了 userId，同步存入 Supabase assessments 表
         _t['supabase_start'] = time.time()
@@ -1064,8 +1069,7 @@ def assess():
         _abi = _t['ability_end'] - _t['ability_start']
         _tag = _t['tag_end'] - _t['tag_start']
         _db = _t['db_end'] - _t['db_start']
-        _split_wait = _t['split_wait_end'] - _t['split_wait_start']
-        _split_total = (_split_timing[1] - _split_timing[0]) if _split_timing[1] > 0 else 0
+        _greet = _t['greeting_end'] - _t['greeting_start']
         _supa = _t['supabase_end'] - _t['supabase_start']
 
         print(f"\n{'=' * 60}")
@@ -1077,8 +1081,7 @@ def assess():
         print(f"  4. 能力维度映射:               {_abi:.3f}s")
         print(f"  5. 趣味标签生成:               {_tag:.3f}s")
         print(f"  6. PostgreSQL日志写入:          {_db:.2f}s  ← {'⚠️ 慢!' if _db > 1 else '✓'}")
-        print(f"  7. 等待简历拆分线程:            {_split_wait:.2f}s  ← {'⚠️ 额外等待!' if _split_wait > 0.5 else '✓ 已在收敛期间完成'}")
-        print(f"     └─ 简历拆分LLM总耗时:       {_split_total:.2f}s（后台并行）")
+        print(f"  7. Sparky开场白（LLM）:         {_greet:.2f}s  ← {'⚠️ 慢!' if _greet > 5 else '✓'}")
         print(f"  8. Supabase存储:               {_supa:.2f}s  ← {'⚠️ 慢!' if _supa > 1 else '✓'}")
         print(f"{'=' * 60}\n")
 
@@ -1323,12 +1326,14 @@ def chat_start():
         user_id = data.get('userId')
         assessment_id = data.get('assessmentId')
         resume_sections = data.get('resumeSections')  # 评测阶段预拆分的段落
+        preloaded_greeting = data.get('greeting')    # 评估阶段预生成的开场白
         result = chat_agent.start_session(
             assessment_context=assessment_context,
             resume_text=resume_text,
             user_id=user_id,
             assessment_id=assessment_id,
             resume_sections=resume_sections,
+            preloaded_greeting=preloaded_greeting,
         )
 
         print(f"[Agent API] 会话已创建: {result['session_id'][:8]}...")

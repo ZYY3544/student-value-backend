@@ -700,7 +700,8 @@ class ChatAgent:
 
     def start_session(self, assessment_context: dict, resume_text: str,
                       user_id: str = None, assessment_id: str = None,
-                      resume_sections: list = None) -> dict:
+                      resume_sections: list = None,
+                      preloaded_greeting: str = None) -> dict:
         """
         开启新的对话会话
 
@@ -778,9 +779,13 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 已注入跨会话记忆")
 
-        # ===== 个性化开场白（优先执行，避免与后台任务并发触发 GLM 限流） =====
-        print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
-        greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
+        # ===== 个性化开场白 =====
+        if preloaded_greeting:
+            greeting = preloaded_greeting
+            print(f"[Orchestrator] 使用评估阶段预生成的开场白（{len(greeting)}字）")
+        else:
+            print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
+            greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
 
         # 后台任务共用的 client/model（提前绑定，避免分支遗漏）
         _bg_client, _bg_model = active_client, active_model
