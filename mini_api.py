@@ -548,6 +548,9 @@ if llm_service is None:
     print("✗ LLM服务初始化失败: GLM 未配置，请设置 GLM_API_KEY 环境变量")
     exit(1)
 
+# 简历拆分缓存（评估阶段后台启动，chat/start 时取用）
+_pending_splits = {}  # key: hash(resume_text) -> {"thread": Thread, "result": [None]}
+
 # 简历优化 Agent
 chat_agent = None
 try:
@@ -921,6 +924,21 @@ def assess():
             except Exception as e:
                 print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
         _t['greeting_end'] = time.time()
+
+        # 9. 后台启动简历结构拆分（不阻塞返回，用户打开画布时取用）
+        _split_key = hash(resume_text)
+        _split_result = [None]
+        def _bg_split_after_greeting():
+            try:
+                _split_result[0] = split_resume_sections(
+                    model_router.glm_client, model_router.glm_model, resume_text
+                )
+                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落")
+            except Exception as e:
+                print(f"[评估→后台] 简历拆分失败: {e}")
+        _split_thread = threading.Thread(target=_bg_split_after_greeting, daemon=True)
+        _split_thread.start()
+        _pending_splits[_split_key] = {"thread": _split_thread, "result": _split_result}
 
         # ===========================================
         # 详细日志输出（验证映射逻辑）
@@ -1327,6 +1345,16 @@ def chat_start():
         assessment_id = data.get('assessmentId')
         resume_sections = data.get('resumeSections')  # 评测阶段预拆分的段落
         preloaded_greeting = data.get('greeting')    # 评估阶段预生成的开场白
+
+        # 尝试从评估阶段的后台拆分缓存中取用简历段落
+        if not resume_sections:
+            _split_key = hash(resume_text)
+            pending = _pending_splits.pop(_split_key, None)
+            if pending:
+                pending["thread"].join(timeout=10)  # 等待后台线程完成（通常已经跑了几秒了）
+                if pending["result"][0]:
+                    resume_sections = pending["result"][0]
+                    print(f"[Agent API] 从评估阶段缓存获取简历段落（{len(resume_sections)} 段）")
         result = chat_agent.start_session(
             assessment_context=assessment_context,
             resume_text=resume_text,
