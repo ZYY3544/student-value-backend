@@ -254,7 +254,7 @@ class DiagnosisAgent:
 
     def diagnose(self, assessment_context: dict, resume_text: str) -> str:
         """
-        生成开场诊断（非流式）
+        生成开场诊断（非流式，含 429 重试）
 
         Args:
             assessment_context: 评测结果
@@ -265,27 +265,38 @@ class DiagnosisAgent:
         """
         user_prompt = self._build_input(assessment_context, resume_text)
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=self.TEMPERATURE,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            import traceback
-            print(f"[DiagnosisAgent] 诊断生成失败: {e}")
-            traceback.print_exc()
-            # 兜底：基于评测数据拼一个还算个性化的开场白
-            job_title = assessment_context.get("jobTitle", "")
-            title_part = f"，看到你的目标是**{job_title}**方向" if job_title else ""
-            return (
-                f"嗨，我是 Sparky！已经看过你的评测结果和简历了{title_part}。"
-                "我可以帮你优化简历、按目标 JD 定制改写、搜索岗位信息，你想先从哪里开始？"
-            )
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=self.TEMPERATURE,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                error_str = str(e)
+                if '429' in error_str and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3  # 3s, 6s
+                    print(f"[DiagnosisAgent] 429 限流，{wait}s 后重试 ({attempt + 1}/{max_retries})")
+                    import time
+                    time.sleep(wait)
+                    continue
+                import traceback
+                print(f"[DiagnosisAgent] 诊断生成失败: {e}")
+                traceback.print_exc()
+                # 兜底：基于评测数据拼一个还算个性化的开场白
+                job_title = assessment_context.get("jobTitle", "")
+                title_part = f"，看到你的目标是**{job_title}**方向" if job_title else ""
+                return (
+                    f"嗨，我是 Sparky！已经看过你的评估结果和简历了{title_part}。"
+                    "我可以帮你优化简历、按目标 JD 定制改写、搜索岗位信息，你想先从哪里开始？"
+                )
+        # 不应到达这里，但以防万一
+        return "嗨，我是 Sparky！我可以帮你优化简历，你想先从哪里开始？"
 
     def _build_input(self, ctx: dict, resume_text: str) -> str:
         """构建诊断 Agent 的输入"""
@@ -435,10 +446,10 @@ class PlanningAgent:
 
     def generate_plan(self, assessment_context: dict, resume_text: str) -> Optional[dict]:
         """
-        生成结构化优化计划
+        生成结构化优化计划（含 429 重试）
 
         Args:
-            assessment_context: 评测结果
+            assessment_context: 评估结果
             resume_text: 简历原文
 
         Returns:
@@ -446,23 +457,33 @@ class PlanningAgent:
         """
         user_prompt = self._build_input(assessment_context, resume_text)
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=self.TEMPERATURE,
-                response_format={"type": "json_object"},
-            )
-            content = response.choices[0].message.content.strip()
-            plan = safe_json_parse(content)
-            print(f"[PlanningAgent] 优化计划生成成功，共 {len(plan.get('plan_items', []))} 条建议")
-            return plan
-        except Exception as e:
-            print(f"[PlanningAgent] 计划生成失败: {e}")
-            return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=self.TEMPERATURE,
+                    response_format={"type": "json_object"},
+                )
+                content = response.choices[0].message.content.strip()
+                plan = safe_json_parse(content)
+                print(f"[PlanningAgent] 优化计划生成成功，共 {len(plan.get('plan_items', []))} 条建议")
+                return plan
+            except Exception as e:
+                error_str = str(e)
+                if '429' in error_str and attempt < max_retries - 1:
+                    wait = (attempt + 1) * 3
+                    print(f"[PlanningAgent] 429 限流，{wait}s 后重试 ({attempt + 1}/{max_retries})")
+                    import time
+                    time.sleep(wait)
+                    continue
+                print(f"[PlanningAgent] 计划生成失败: {e}")
+                return None
+        return None
 
     def _build_input(self, ctx: dict, resume_text: str) -> str:
         """构建规划 Agent 的输入（复用 DiagnosisAgent 的因素映射逻辑）"""

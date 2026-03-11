@@ -808,6 +808,8 @@ class ChatAgent:
 
         def _bg_plan():
             try:
+                import time
+                time.sleep(5)  # 错开与 DiagnosisAgent 的 LLM 调用，避免 429
                 plan = _bg_planning.generate_plan(assessment_context, resume_text)
                 if plan:
                     self.session_manager.update_session(session_id, {
