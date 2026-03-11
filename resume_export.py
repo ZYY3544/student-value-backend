@@ -610,12 +610,14 @@ def _generate_simple_pdf(resume_sections: list, user_name: str = '') -> io.Bytes
             _, label = SECTION_META.get(sec_type, (99, sec_type))
             pdf.ln(3)
             pdf.set_font_size(13)
+            pdf.set_x(pdf.l_margin)
             pdf.cell(0, 8, label, ln=True)
-            pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 170, pdf.get_y())
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + 170, pdf.get_y())
             pdf.ln(2)
 
         pdf.set_font_size(10)
         if title:
+            pdf.set_x(pdf.l_margin)
             if font_added:
                 # CJK 字体没有 Bold 变体，用稍大字号模拟加粗
                 pdf.set_font_size(11)
@@ -627,10 +629,16 @@ def _generate_simple_pdf(resume_sections: list, user_name: str = '') -> io.Bytes
                 pdf.set_font(style='')
 
         if content:
+            content_width = pdf.w - pdf.l_margin - pdf.r_margin
             for line in content.split('\n'):
                 stripped = line.strip()
                 if stripped:
-                    pdf.multi_cell(0, 5, '  ' + stripped)
+                    pdf.set_x(pdf.l_margin)
+                    try:
+                        pdf.multi_cell(content_width, 5, '  ' + stripped)
+                    except Exception:
+                        # 字符无法渲染时跳过该行
+                        pdf.ln(5)
 
     buf = io.BytesIO()
     pdf.output(buf)
