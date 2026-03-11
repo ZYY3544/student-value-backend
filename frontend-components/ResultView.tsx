@@ -204,7 +204,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ result, inputData, onRes
             CAMPUS REPORT
           </div>
           <div className="text-4xl font-black text-white tracking-tight flex items-center gap-2 text-left">
-            校招身价报告
+            校招竞争力报告
             <Sparkles size={28} className="text-[#f8ea1a] fill-[#f8ea1a]" />
           </div>
       </div>

@@ -1,7 +1,7 @@
 import { AssessmentInput, AssessmentResult, Abilities, AbilityItem } from "../types";
 
 /**
- * 学生版校招身价评估服务
+ * 学生版校招竞争力评估服务
  * 调用后端 API 进行真实评估
  */
 
