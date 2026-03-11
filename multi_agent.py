@@ -319,7 +319,7 @@ class DiagnosisAgent:
 
         resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
 
-        # 找出最弱的能力维度
+        # 找出偏弱的能力维度
         weak_abilities = []
         strong_abilities = []
         if isinstance(abilities, dict):
@@ -327,9 +327,9 @@ class DiagnosisAgent:
             weak_abilities = [name for name, _ in sorted_abs[:2]]
             strong_abilities = [name for name, _ in sorted_abs[-2:]]
 
-        return f"""请对以下用户的评测结果和简历进行诊断分析。
+        return f"""请对以下用户的评估结果和简历进行诊断分析。
 
-【评测结果】
+【评估结果】
 - 学历: {ctx.get('educationLevel', '未知')} | 专业: {ctx.get('major', '未知')}
 - 意向城市: {ctx.get('city', '未知')} | 意向行业: {ctx.get('industry', '未知')}
 - 企业性质: {ctx.get('companyType', '未知')} | 意向企业: {ctx.get('targetCompany', '未知')}
@@ -345,7 +345,8 @@ class DiagnosisAgent:
 
 能力分析提示:
 - 较强维度: {', '.join(strong_abilities) if strong_abilities else '暂无'}
-- 待提升维度: {', '.join(weak_abilities) if weak_abilities else '暂无'}
+- 偏弱维度: {', '.join(weak_abilities) if weak_abilities else '暂无'}
+（注意：应届生管理力偏弱属于正常情况，诊断时不必过度强调）
 
 【简历内容】
 {resume_preview}
@@ -362,7 +363,7 @@ class PlanningAgent:
     规划 Agent —— 分析评测短板+简历，生成结构化优化计划
 
     职责：
-    - 分析评测结果中的薄弱因素
+    - 分析评测结果中的偏弱维度
     - 对照简历段落找出可优化点
     - 输出 2-5 条优先级排序的优化建议
     - 为 OptimizeAgent 提供主动引导依据
@@ -408,7 +409,7 @@ class PlanningAgent:
 【分析维度】
 - 量化数据：哪些经历缺少具体数字
 - 结构表达：哪些段落缺乏背景-任务-行动-成果结构
-- 能力体现：评测中的薄弱能力维度，在简历哪些段落可以加强体现
+- 能力体现：评测中偏弱的能力维度，在简历哪些段落可以加强体现
 - 差异化：哪些经历有独特价值但没有突出
 - 求职阶段：用户是在探索方向、准备材料、还是已经在投递
 
@@ -419,7 +420,8 @@ class PlanningAgent:
 - proactive_actions 给出 1-3 个建议
 
 【规则】
-- 优先关注评测得分最低的能力维度对应的简历段落
+- 优先关注评测得分偏弱的能力维度对应的简历段落
+- 注意：应届生的管理力偏弱是正常的（缺少团队管理经验），在诊断和建议中不要过度强调，可以一笔带过
 - 每条建议要具体到简历中的某个段落
 - 不要建议编造不存在的经历
 - career_insight 要基于数据说话，给出具体的方向性建议
@@ -488,7 +490,7 @@ class PlanningAgent:
             for name, info in abilities.items()
         ) if isinstance(abilities, dict) else "  暂无能力数据"
 
-        # 能力排序，找出薄弱维度
+        # 能力排序，找出偏弱维度
         weak_abilities = []
         strong_abilities = []
         if isinstance(abilities, dict):
@@ -498,9 +500,9 @@ class PlanningAgent:
 
         resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
 
-        return f"""请分析以下评测结果和简历，生成优化计划。
+        return f"""请分析以下评估结果和简历，生成优化计划。
 
-【评测结果】
+【评估结果】
 - 学历: {ctx.get('educationLevel', '未知')} | 专业: {ctx.get('major', '未知')}
 - 意向城市: {ctx.get('city', '未知')} | 意向行业: {ctx.get('industry', '未知')}
 - 目标岗位: {ctx.get('jobTitle', '未知')}
@@ -514,7 +516,8 @@ class PlanningAgent:
 
 能力分析:
 - 较强维度: {', '.join(strong_abilities) if strong_abilities else '暂无'}
-- 待提升维度: {', '.join(weak_abilities) if weak_abilities else '暂无'}
+- 偏弱维度: {', '.join(weak_abilities) if weak_abilities else '暂无'}
+（注意：应届生管理力偏弱是正常情况，不必过度强调）
 
 【简历内容】
 {resume_preview}
@@ -562,7 +565,7 @@ class OptimizeAgent:
    | 思辨力 | 问题复杂度、挑战性、约束条件 | 强调背景复杂度/分析/洞察 |
    | 创新力 | 新方法、新思路、流程优化 | 首次/创新性地/从0到1搭建 |
 
-   闭环要求：找出得分最低的2个维度 → 定位相关简历段落 → 改写时告知用户提升了哪个维度 → 每条改写关联具体维度。用户未指定改哪里时，优先推荐薄弱维度对应段落。
+   闭环要求：找出得分偏弱的2个维度 → 定位相关简历段落 → 改写时告知用户提升了哪个维度 → 每条改写关联具体维度。用户未指定改哪里时，优先推荐偏弱维度对应段落。注意：应届生管理力偏弱属于正常情况，不必过度关注。
 
 5. 红线：禁止编造经历、编造数字、改变事实。需要数据但用户没提供时用「[待补充: 具体数字]」标记。如果用户要求编造不存在的经历，礼貌拒绝。
 
@@ -989,7 +992,7 @@ EDIT>>>
         )
 
         if isinstance(abilities, dict) and abilities:
-            # 按分数排序，标注薄弱因素
+            # 按分数排序，标注偏弱维度
             sorted_abilities = sorted(
                 abilities.items(),
                 key=lambda x: x[1].get('score', 0) if isinstance(x[1], dict) else 0
@@ -999,7 +1002,7 @@ EDIT>>>
                 if isinstance(info, dict):
                     score = info.get('score', '?')
                     level = info.get('level', '?')
-                    weak_tag = " ⚠ 薄弱因素，优先改写" if i < 3 else ""
+                    weak_tag = " ⚠ 偏弱维度" if i < 3 else ""
                     abilities_lines.append(f"  - {name}: {score}分 ({level}){weak_tag}")
                 else:
                     abilities_lines.append(f"  - {name}: {info}")
