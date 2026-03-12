@@ -1153,9 +1153,9 @@ class ChatAgent:
         """使用深度分析 prompt 流式生成报告解读"""
         system_prompt = self._build_report_analysis_prompt(session)
 
-        # 使用已解析的 client/model（由 _resolve_model_for_user 更新到子 Agent 上）
-        active_client = self.optimize_agent.client
-        active_model = self.optimize_agent.model
+        # 使用 GLM-4-Plus（diagnosis_agent 绑定的模型）
+        active_client = self.diagnosis_agent.client
+        active_model = self.diagnosis_agent.model
 
         try:
             response = active_client.chat.completions.create(
