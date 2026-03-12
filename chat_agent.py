@@ -1149,20 +1149,17 @@ class ChatAgent:
 - 不要泛泛而谈，每句话都要有具体依据
 - 全文 300-400 字
 
-## 引导问题
+## 引导问题（第一轮：帮学生看懂报告）
 在三段分析之后，空一行，输出「💡 **你可能还想了解：**」，然后列出 3 个编号问题。
 
-学生看完报告后真正关心的只有以下几类，从中选 3 个最贴合该用户情况的方向各出一题：
-
-1. **薪酬困惑** — 学生不理解估值背后的逻辑。例：我的估值主要受哪些因素影响？做到什么程度能让估值提升一个档？
-2. **短板怎么补** — 报告指出了弱项，但学生不知道具体怎么行动。例：「可以加强的方向」里提到的 XX 能力，在校期间有什么高效的提升路径？
-3. **简历没写好** — 学生觉得自己有经历但报告没充分体现。例：我在 XX 的经历其实做了很多事，怎么改写能让这段经历更有说服力？
-4. **岗位是否合适** — 学生对目标岗位不确定。例：根据我的背景，除了 XX 岗位，还有哪些方向可能更匹配我？
+第一轮的问题必须围绕「帮学生理解这份报告本身」，聚焦以下方向：
+1. **评分方法论** — 学生想知道能力得分是怎么算出来的。例：我的5维能力画像是怎么生成的？是简历里哪些内容决定了这些分数？
+2. **薪酬数据来源** — 学生质疑薪酬数据的准确性。例：{salary_range} 这个估值区间的数据来源是什么？为什么和我了解到的校招薪资有差异？
+3. **维度含义** — 学生不理解某个维度。例：「XX」这个维度具体在衡量什么能力？为什么我在这项上偏低/偏高？
 
 要求：
-- 必须引用该用户简历中的具体经历、目标岗位、能力短板来出题，禁止泛泛而谈
-- 问题语气像同学之间聊天，口语化，不要太正式
-- 每个问题一句话，简短直接"""
+- 必须引用该用户的实际数据（薪酬区间、具体维度名、得分）来出题
+- 问题语气像同学之间聊天，口语化，简短直接"""
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
         """使用深度分析 prompt 流式生成报告解读"""
@@ -1191,6 +1188,56 @@ class ChatAgent:
             print(f"[Orchestrator] 使用的模型: {active_model}")
             traceback.print_exc()
             yield f"抱歉，生成报告解读时遇到了问题（{type(e).__name__}），请再试一次。"
+
+    # ===== 分层引导问题系统 =====
+
+    def _get_guidance_layer(self, session: dict) -> int:
+        """根据报告解读后的对话轮数，计算当前引导层级（0=未激活, 1/2/3=三层）"""
+        if not session.get("report_analysis_done"):
+            return 0
+        rounds = session.get("post_report_rounds", 0)
+        if rounds <= 2:
+            return 2  # Layer 1 已在报告解读中输出，后续从 Layer 2 开始
+        elif rounds <= 5:
+            return 3
+        else:
+            return 0  # 超过一定轮数后停止引导，让用户自由对话
+
+    def _build_guidance_questions(self, session: dict) -> str:
+        """根据引导层级，用评估数据生成个性化引导问题"""
+        layer = self._get_guidance_layer(session)
+        if layer <= 0:
+            return ""
+
+        ctx = session.get("assessment_context", {})
+        abilities = ctx.get("abilities", {})
+        salary_range = ctx.get("salaryRange", "未知")
+        job_title = ctx.get("jobTitle", "未知")
+
+        # 按得分排序找出最强/最弱维度
+        sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get("score", 50))
+        weakest_name = sorted_abs[0][0] if sorted_abs else "某项能力"
+        strongest_name = sorted_abs[-1][0] if len(sorted_abs) > 1 else "某项能力"
+
+        if layer == 2:
+            # 第二层：个人洞察 — 报告对我意味着什么
+            questions = [
+                f"报告里说我的「{weakest_name}」相对偏弱，在校期间有什么具体方法能快速补上来？",
+                f"我的「{strongest_name}」是亮点，面试{job_title}时怎么把这个优势讲出来？",
+                f"对于{job_title}这个岗位，面试官最看重简历里的哪些经历？",
+            ]
+        elif layer == 3:
+            # 第三层：行动落地 — 推动学生去改简历、做规划
+            questions = [
+                f"能帮我看看简历整体怎么调整，让它更匹配{job_title}吗？",
+                f"除了{job_title}，根据我的背景还有哪些岗位方向值得考虑？",
+                f"如果要在3个月内提升自己的岗位匹配度，你建议我优先做哪几件事？",
+            ]
+        else:
+            return ""
+
+        lines = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
+        return f"\n\n---\n\n💡 **你可能还想了解：**\n{lines}"
 
     def chat(self, session_id: str, user_message: str, canvas_mode: bool = False) -> Optional[str]:
         """
@@ -1264,6 +1311,11 @@ class ChatAgent:
             if action == "解读报告":
                 print(f"[Orchestrator] 路由 → 深度报告解读（非流式）")
                 reply = "".join(self._stream_report_analysis(session))
+                # 标记报告解读已完成，启动分层引导
+                self.session_manager.update_session(session_id, {
+                    "report_analysis_done": True,
+                    "post_report_rounds": 0,
+                })
 
             elif action in ("润色项目经历", "模拟面试"):
                 enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
@@ -1330,6 +1382,17 @@ class ChatAgent:
             if jd_hint and phase == "optimizing" and not reeval_hint:
                 reply = reply + "\n\n---\n\n" + jd_hint
                 self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
+
+            # 分层引导问题（报告解读后的后续对话）
+            if action != "解读报告":  # 解读报告本身已含 Layer 1 引导
+                guidance = self._build_guidance_questions(session)
+                if guidance:
+                    reply = reply + guidance
+                    # 递增轮次计数
+                    rounds = session.get("post_report_rounds", 0)
+                    self.session_manager.update_session(session_id, {
+                        "post_report_rounds": rounds + 1,
+                    })
 
             # 保存回复
             self.session_manager.add_message(session_id, "assistant", reply)
@@ -1417,6 +1480,11 @@ class ChatAgent:
             if action == "解读报告":
                 print(f"[Orchestrator] 路由 → 深度报告解读（专用 Prompt）")
                 stream = self._stream_report_analysis(session)
+                # 标记报告解读已完成，启动分层引导
+                self.session_manager.update_session(session_id, {
+                    "report_analysis_done": True,
+                    "post_report_rounds": 0,
+                })
 
             elif action in ("润色简历", "润色项目经历", "模拟面试", "职业规划"):
                 print(f"[Orchestrator] 路由 → OptimizeAgent（动作: {action}）")
@@ -1490,6 +1558,19 @@ class ChatAgent:
                 full_reply += jd_block
                 yield jd_block
                 self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
+
+            # 分层引导问题（报告解读后的后续对话）
+            if action != "解读报告":  # 解读报告本身已含 Layer 1 引导
+                # 重新获取 session 拿到最新 guidance 状态
+                session = self.session_manager.get_session(session_id)
+                guidance = self._build_guidance_questions(session)
+                if guidance:
+                    full_reply += guidance
+                    yield guidance
+                    rounds = session.get("post_report_rounds", 0)
+                    self.session_manager.update_session(session_id, {
+                        "post_report_rounds": rounds + 1,
+                    })
 
             # 保存完整回复
             if full_reply:
