@@ -516,6 +516,12 @@ class ModelRouter:
             except Exception as e:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
 
+        # 多模型梯队（共用同一个 client，只切换 model name）
+        self.glm_model_plus = config.GLM_MODEL_PLUS    # 中等任务：开场白、PlanningAgent
+        self.glm_model_flash = config.GLM_MODEL_FLASH  # 轻量任务：简历拆分
+        if self.glm_client:
+            print(f"[ModelRouter] GLM 模型梯队: {self.glm_model}(核心) / {self.glm_model_plus}(中等) / {self.glm_model_flash}(轻量)")
+
         self.budget = config.SONNET_BUDGET_PER_USER
 
     def get_client_for_user(self, user_id: str) -> tuple:

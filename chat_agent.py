@@ -649,18 +649,22 @@ class ChatAgent:
         self.model_router = model_router  # 多模型路由器（Sonnet/GLM 切换）
         self.session_manager = SessionManager(ttl_seconds=3600)
 
-        # 初始化子 Agent（每个 Agent 拥有独立的 Prompt，共享 LLM client）
-        self.diagnosis_agent = DiagnosisAgent(client, model)
-        self.planning_agent = PlanningAgent(client, model)
-        # OptimizeAgent 的 tool_executor 在 start_session 时按会话创建
-        self.optimize_agent = OptimizeAgent(client, model)
-        self.report_agent = ReportAgent(client, model)
+        # 初始化子 Agent — 按任务复杂度分配不同模型
+        # 核心改写：GLM-5（最强）  中等任务：GLM-4-Plus  轻量任务：GLM-4-Flash
+        _model_plus = model_router.glm_model_plus if model_router else model
+        _model_flash = model_router.glm_model_flash if model_router else model
+        self.diagnosis_agent = DiagnosisAgent(client, _model_plus)   # 开场白 → Plus
+        self.planning_agent = PlanningAgent(client, _model_plus)     # 优化规划 → Plus
+        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写 → GLM-5
+        self.report_agent = ReportAgent(client, model)               # 总结报告 → GLM-5
+        self._model_flash = _model_flash  # 供简历拆分使用
 
-        print("[Orchestrator] 多 Agent 系统初始化完成")
-        print(f"  - DiagnosisAgent: 开场诊断（温度 {DiagnosisAgent.TEMPERATURE}）")
-        print(f"  - PlanningAgent:  优化规划（温度 {PlanningAgent.TEMPERATURE}）")
-        print(f"  - OptimizeAgent:  简历优化（温度 {OptimizeAgent.TEMPERATURE}）")
-        print(f"  - ReportAgent:    总结报告（温度 {ReportAgent.TEMPERATURE}）")
+        print("[Orchestrator] 多 Agent 系统初始化完成（多模型梯队）")
+        print(f"  - DiagnosisAgent: 开场诊断 → {_model_plus}（温度 {DiagnosisAgent.TEMPERATURE}）")
+        print(f"  - PlanningAgent:  优化规划 → {_model_plus}（温度 {PlanningAgent.TEMPERATURE}）")
+        print(f"  - OptimizeAgent:  简历优化 → {model}（温度 {OptimizeAgent.TEMPERATURE}）")
+        print(f"  - ReportAgent:    总结报告 → {model}（温度 {ReportAgent.TEMPERATURE}）")
+        print(f"  - 简历拆分:       → {_model_flash}")
         if model_router:
             print(f"  - ModelRouter:    Sonnet/GLM 自动切换已启用")
         if llm_service and convergence_engine:
@@ -686,15 +690,14 @@ class ChatAgent:
             print("[Orchestrator] ModelRouter 无可用模型，回退默认 client")
             return self.client, self.model, "glm"
 
-        # 更新所有子 Agent 的 client 和 model
+        # 更新所有子 Agent 的 client（共用），但保持各自的模型分层
         self.diagnosis_agent.client = client
-        self.diagnosis_agent.model = model
         self.planning_agent.client = client
-        self.planning_agent.model = model
         self.optimize_agent.client = client
-        self.optimize_agent.model = model
+        self.optimize_agent.model = model  # 核心改写跟随主模型
         self.report_agent.client = client
-        self.report_agent.model = model
+        self.report_agent.model = model    # 报告生成跟随主模型
+        # diagnosis_agent 和 planning_agent 保持 Plus 模型不变
 
         return client, model, provider
 
@@ -799,7 +802,7 @@ class ChatAgent:
         else:
             def _bg_split():
                 try:
-                    sections = split_resume_sections(_bg_client, _bg_model, resume_text)
+                    sections = split_resume_sections(_bg_client, self._model_flash, resume_text)
                     self.session_manager.update_session(session_id, {
                         "resume_sections": sections
                     })
@@ -808,13 +811,13 @@ class ChatAgent:
 
             threading.Thread(target=_bg_split, daemon=True).start()
 
-        # 后台线程生成优化计划（PlanningAgent）
-        _bg_planning = PlanningAgent(_bg_client, _bg_model)
+        # 后台线程生成优化计划（PlanningAgent → GLM-4-Plus）
+        _bg_planning = self.planning_agent  # 已在 __init__ 中用 Plus 模型初始化
 
         def _bg_plan():
             try:
                 import time
-                time.sleep(5)  # 错开与 DiagnosisAgent 的 LLM 调用，避免 429
+                time.sleep(3)  # 错开并发（现在用不同模型，冲突已大幅降低）
                 plan = _bg_planning.generate_plan(assessment_context, resume_text)
                 if plan:
                     self.session_manager.update_session(session_id, {

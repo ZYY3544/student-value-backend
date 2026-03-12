@@ -919,8 +919,11 @@ def assess():
                     'companyType': company_type,
                     'targetCompany': target_company,
                 }
-                _greeting = chat_agent.diagnosis_agent.diagnose(_greeting_ctx, resume_text)
-                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字）")
+                # 使用 GLM-4-Plus 生成开场白（比 GLM-5 快、便宜，不占核心模型并发）
+                from multi_agent import DiagnosisAgent
+                _greeting_agent = DiagnosisAgent(model_router.glm_client, model_router.glm_model_plus)
+                _greeting = _greeting_agent.diagnose(_greeting_ctx, resume_text)
+                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字，模型: {model_router.glm_model_plus}）")
             except Exception as e:
                 print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
         _t['greeting_end'] = time.time()
@@ -931,9 +934,9 @@ def assess():
         def _bg_split_after_greeting():
             try:
                 _split_result[0] = split_resume_sections(
-                    model_router.glm_client, model_router.glm_model, resume_text
+                    model_router.glm_client, model_router.glm_model_flash, resume_text
                 )
-                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落")
+                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落（模型: {model_router.glm_model_flash}）")
             except Exception as e:
                 print(f"[评估→后台] 简历拆分失败: {e}")
         _split_thread = threading.Thread(target=_bg_split_after_greeting, daemon=True)

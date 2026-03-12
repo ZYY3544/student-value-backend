@@ -180,6 +180,16 @@ class Config:
         return os.getenv('GLM_MODEL', 'glm-5')
 
     @property
+    def GLM_MODEL_PLUS(self) -> str:
+        """GLM 中等模型（开场白、PlanningAgent 等）"""
+        return os.getenv('GLM_MODEL_PLUS', 'glm-4-plus')
+
+    @property
+    def GLM_MODEL_FLASH(self) -> str:
+        """GLM 轻量模型（简历拆分等简单任务）"""
+        return os.getenv('GLM_MODEL_FLASH', 'glm-4-flash')
+
+    @property
     def GLM_BASE_URL(self) -> str:
         """GLM API 基础 URL"""
         return os.getenv('GLM_BASE_URL', 'https://open.bigmodel.cn/api/paas/v4')
