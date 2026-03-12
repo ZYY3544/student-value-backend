@@ -479,7 +479,7 @@ class ModelRouter:
     模型路由器 - 统一使用 GLM，Sonnet 仅作为备用
 
     策略：
-    1. 优先使用 GLM（默认 glm-5）
+    1. 优先使用 GLM（默认 glm-4-plus）
     2. GLM 不可用时回退 Sonnet
     """
 
@@ -517,10 +517,10 @@ class ModelRouter:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
 
         # 多模型梯队（共用同一个 client，只切换 model name）
-        self.glm_model_plus = config.GLM_MODEL_PLUS    # 中等任务：开场白、PlanningAgent
+        self.glm_model_plus = config.GLM_MODEL_PLUS    # 开场白、PlanningAgent
         self.glm_model_flash = config.GLM_MODEL_FLASH  # 轻量任务：简历拆分
         if self.glm_client:
-            print(f"[ModelRouter] GLM 模型梯队: {self.glm_model}(核心) / {self.glm_model_plus}(中等) / {self.glm_model_flash}(轻量)")
+            print(f"[ModelRouter] GLM 模型梯队: {self.glm_model}(核心) / {self.glm_model_flash}(轻量)")
 
         self.budget = config.SONNET_BUDGET_PER_USER
 

@@ -639,7 +639,7 @@ class ChatAgent:
     # 表示还想继续优化的信号词（优先级高于总结关键词）
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
-    def __init__(self, client: OpenAI, model: str = "glm-5",
+    def __init__(self, client: OpenAI, model: str = "glm-4-plus",
                  llm_service=None, convergence_engine=None,
                  model_router=None):
         self.client = client
@@ -650,13 +650,13 @@ class ChatAgent:
         self.session_manager = SessionManager(ttl_seconds=3600)
 
         # 初始化子 Agent — 按任务复杂度分配不同模型
-        # 核心改写：GLM-5（最强）  中等任务：GLM-4-Plus  轻量任务：GLM-4-Flash
+        # 核心改写：GLM-4-Plus  轻量任务：GLM-4-Flash
         _model_plus = model_router.glm_model_plus if model_router else model
         _model_flash = model_router.glm_model_flash if model_router else model
         self.diagnosis_agent = DiagnosisAgent(client, _model_plus)   # 开场白 → Plus
         self.planning_agent = PlanningAgent(client, _model_plus)     # 优化规划 → Plus
-        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写 → GLM-5
-        self.report_agent = ReportAgent(client, model)               # 总结报告 → GLM-5
+        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写 → GLM-4-Plus
+        self.report_agent = ReportAgent(client, model)               # 总结报告 → GLM-4-Plus
         self._model_flash = _model_flash  # 供简历拆分使用
 
         print("[Orchestrator] 多 Agent 系统初始化完成（多模型梯队）")
@@ -1147,7 +1147,18 @@ class ChatAgent:
 - 不要提及"职级"、"等级"、"level"、具体分数
 - 语气像朋友在帮你分析，专业但不端着
 - 不要泛泛而谈，每句话都要有具体依据
-- 全文 300-400 字"""
+- 全文 300-400 字
+
+## 引导问题
+在三段分析之后，空一行，输出：
+
+💡 **你可能还想了解：**
+然后列出 2-3 个基于用户实际情况的引导问题，用数字编号，例如：
+1. 你简历中的 XX 经历可以怎样更好地呈现给面试官？
+2. 想了解 XX 方向有哪些快速提升的方法吗？
+3. 要不要聊聊 XX 行业校招的薪资谈判技巧？
+
+问题要具体、有针对性，结合用户的简历内容和目标岗位生成，不要泛泛而谈。"""
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
         """使用深度分析 prompt 流式生成报告解读"""

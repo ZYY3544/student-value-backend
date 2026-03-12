@@ -919,7 +919,7 @@ def assess():
                     'companyType': company_type,
                     'targetCompany': target_company,
                 }
-                # 使用 GLM-4-Plus 生成开场白（比 GLM-5 快、便宜，不占核心模型并发）
+                # 使用 GLM-4-Plus 生成开场白
                 from multi_agent import DiagnosisAgent
                 _greeting_agent = DiagnosisAgent(model_router.glm_client, model_router.glm_model_plus)
                 _greeting = _greeting_agent.diagnose(_greeting_ctx, resume_text)

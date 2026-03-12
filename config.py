@@ -176,8 +176,8 @@ class Config:
 
     @property
     def GLM_MODEL(self) -> str:
-        """GLM 模型名称（如 glm-5、glm-4-plus、glm-4-flash）"""
-        return os.getenv('GLM_MODEL', 'glm-5')
+        """GLM 模型名称（如 glm-4-plus、glm-4-flash）"""
+        return os.getenv('GLM_MODEL', 'glm-4-plus')
 
     @property
     def GLM_MODEL_PLUS(self) -> str:
