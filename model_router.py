@@ -479,7 +479,7 @@ class ModelRouter:
     模型路由器 - 统一使用 GLM，Sonnet 仅作为备用
 
     策略：
-    1. 优先使用 GLM（默认 glm-4-plus）
+    1. 优先使用 GLM（默认 glm-4.5）
     2. GLM 不可用时回退 Sonnet
     """
 

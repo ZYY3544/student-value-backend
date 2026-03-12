@@ -176,13 +176,13 @@ class Config:
 
     @property
     def GLM_MODEL(self) -> str:
-        """GLM 模型名称（如 glm-4-plus、glm-4-flash）"""
-        return os.getenv('GLM_MODEL', 'glm-4-plus')
+        """GLM 模型名称"""
+        return os.getenv('GLM_MODEL', 'glm-4.5')
 
     @property
     def GLM_MODEL_PLUS(self) -> str:
         """GLM 中等模型（开场白、PlanningAgent 等）"""
-        return os.getenv('GLM_MODEL_PLUS', 'glm-4-plus')
+        return os.getenv('GLM_MODEL_PLUS', 'glm-4.5')
 
     @property
     def GLM_MODEL_FLASH(self) -> str:

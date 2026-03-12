@@ -639,7 +639,7 @@ class ChatAgent:
     # 表示还想继续优化的信号词（优先级高于总结关键词）
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
-    def __init__(self, client: OpenAI, model: str = "glm-4-plus",
+    def __init__(self, client: OpenAI, model: str = "glm-4.5",
                  llm_service=None, convergence_engine=None,
                  model_router=None):
         self.client = client

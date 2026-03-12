@@ -20,7 +20,7 @@ class LLMService:
     初始化时传入已创建的 client（如 GLMCompatibleClient / BedrockOpenAIClient）
     """
 
-    def __init__(self, client, model: str = "glm-4-plus"):
+    def __init__(self, client, model: str = "glm-4.5"):
         """
         初始化 LLM 服务
 
