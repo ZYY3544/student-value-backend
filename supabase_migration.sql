@@ -33,9 +33,15 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   assessment_id UUID REFERENCES assessments(id) ON DELETE CASCADE,
   phase TEXT DEFAULT 'opening',
   conversation_memory JSONB,
+  pinned BOOLEAN DEFAULT FALSE,
+  title TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 补充列（已有表则追加）
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS title TEXT;
 
 -- 对话消息
 CREATE TABLE IF NOT EXISTS chat_messages (
