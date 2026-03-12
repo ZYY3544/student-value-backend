@@ -1369,11 +1369,24 @@ def chat_start():
 
         print(f"[Agent API] 会话已创建: {result['session_id'][:8]}...")
 
+        # 构造 sections 响应（带 id）
+        raw_sections = result.get('resume_sections') or []
+        sections_out = [
+            {
+                'id': f'section-{i}',
+                'type': sec.get('type', 'other'),
+                'title': sec.get('title', ''),
+                'content': sec.get('content', ''),
+            }
+            for i, sec in enumerate(raw_sections)
+        ]
+
         return jsonify({
             'success': True,
             'data': {
                 'sessionId': result['session_id'],
-                'greeting': result['greeting']
+                'greeting': result['greeting'],
+                'sections': sections_out,
             }
         }), 200
 

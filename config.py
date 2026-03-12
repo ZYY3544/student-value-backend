@@ -187,7 +187,7 @@ class Config:
     @property
     def GLM_MODEL_FLASH(self) -> str:
         """GLM 轻量模型（简历拆分等简单任务）"""
-        return os.getenv('GLM_MODEL_FLASH', 'glm-4-flash')
+        return os.getenv('GLM_MODEL_FLASH', 'glm-4.5')
 
     @property
     def GLM_BASE_URL(self) -> str:
