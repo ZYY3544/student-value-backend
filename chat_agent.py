@@ -727,8 +727,17 @@ class ChatAgent:
         Returns:
             {"session_id": "...", "greeting": "..."}
         """
+        import time as _time
+        _t0 = _time.time()
+        def _lap(label):
+            nonlocal _t0
+            now = _time.time()
+            print(f"[start_session] {label}: {now - _t0:.2f}s")
+            _t0 = now
+
         # 根据用户解析模型（GLM/Sonnet）
         active_client, active_model, active_provider = self._resolve_model_for_user(user_id)
+        _lap("resolve_model")
 
         session_id = self.session_manager.create_session(
             assessment_context=assessment_context,
@@ -737,6 +746,7 @@ class ChatAgent:
             assessment_id=assessment_id,
         )
 
+        _lap("create_session")
         # 记录当前会话使用的模型提供商
         self.session_manager.update_session(session_id, {"active_provider": active_provider})
 
@@ -778,6 +788,7 @@ class ChatAgent:
                 "tool_executor": tool_executor,
             })
 
+        _lap("tool_executor_setup")
         # 加载跨 session 记忆（让 Agent "记住"之前的对话）
         cross_session_memory = SessionManager.load_cross_session_memory(user_id)
         if cross_session_memory:
@@ -786,6 +797,7 @@ class ChatAgent:
             })
             print(f"[Orchestrator] 已注入跨会话记忆")
 
+        _lap("load_cross_session_memory")
         # ===== 个性化开场白 =====
         if preloaded_greeting:
             greeting = preloaded_greeting
@@ -794,6 +806,7 @@ class ChatAgent:
             print(f"[Orchestrator] 调用 DiagnosisAgent 生成个性化开场白")
             greeting = self.diagnosis_agent.diagnose(assessment_context, resume_text)
 
+        _lap("greeting")
         # 后台任务共用的 client/model（提前绑定，避免分支遗漏）
         _bg_client, _bg_model = active_client, active_model
 
@@ -850,6 +863,7 @@ class ChatAgent:
         # 开场完成后进入优化阶段
         self.session_manager.update_session(session_id, {"phase": "optimizing"})
 
+        _lap("save_messages_and_finalize")
         return {
             "session_id": session_id,
             "greeting": greeting,
