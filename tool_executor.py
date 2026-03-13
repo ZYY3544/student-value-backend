@@ -2,10 +2,11 @@
 ===========================================
 Function Call 工具执行器 (Tool Executor)
 ===========================================
-为 OptimizeAgent 提供外部工具调用能力：
-1. search_jobs — 搜索招聘岗位
-2. re_evaluate_resume — 用 HAY 体系重新评估优化后简历
-3. compare_with_jd — LLM 对比简历与 JD 匹配度
+为 OptimizeAgent 提供外部工具调用能力（仅限 LLM 无法直接完成的操作）：
+1. search_jobs — 搜索招聘岗位（Tavily API）
+2. re_evaluate_resume — 用 HAY 体系重新评估优化后简历（算法管线）
+3. fetch_url — 抓取网页内容
+4. save/list/switch_resume_version — 简历版本管理
 """
 
 import json
@@ -14,10 +15,8 @@ import re
 import urllib.request
 import urllib.error
 from html.parser import HTMLParser
-from typing import Optional
 
 import requests
-from utils import safe_json_parse
 
 
 class ToolExecutor:
@@ -66,25 +65,9 @@ class ToolExecutor:
                 return self.re_evaluate_resume(
                     optimized_resume_text=arguments.get("optimized_resume_text", ""),
                 )
-            elif tool_name == "compare_with_jd":
-                return self.compare_with_jd(
-                    jd_text=arguments.get("jd_text", ""),
-                )
             elif tool_name == "fetch_url":
                 return self.fetch_url(
                     url=arguments.get("url", ""),
-                )
-            elif tool_name == "tailor_resume_to_jd":
-                return self.tailor_resume_to_jd(
-                    jd_text=arguments.get("jd_text", ""),
-                )
-            elif tool_name == "verify_job_posting":
-                return self.verify_job_posting(
-                    jd_text=arguments.get("jd_text", ""),
-                )
-            elif tool_name == "compare_multiple_jds":
-                return self.compare_multiple_jds(
-                    jd_list=arguments.get("jd_list", []),
                 )
             elif tool_name == "save_resume_version":
                 return self.save_resume_version(
@@ -116,7 +99,7 @@ class ToolExecutor:
 
     def search_jobs(self, keyword: str, city: str = "全国") -> str:
         """
-        多源搜索招聘信息：Tavily Search API → LLM 兜底
+        搜索招聘信息（Tavily Search API）
 
         Args:
             keyword: 搜索关键词（岗位名称）
@@ -153,15 +136,10 @@ class ToolExecutor:
             if credibility["warnings"]:
                 r["warnings"] = credibility["warnings"]
 
-        if results:
-            return json.dumps(
-                {"keyword": keyword, "city": city, "source": "tavily_search", "results": results[:8]},
-                ensure_ascii=False,
-            )
-
-        # Tavily 无结果 → LLM 兜底
-        print(f"[ToolExecutor] 搜索结果不理想，使用 LLM 兜底")
-        return self._llm_search_fallback(keyword, city)
+        return json.dumps(
+            {"keyword": keyword, "city": city, "source": "tavily_search", "results": results[:8]},
+            ensure_ascii=False,
+        )
 
     def _tavily_search(self, query: str, max_results: int = 8) -> list:
         """调用 Tavily Search API（全网搜索）"""
@@ -184,59 +162,6 @@ class ToolExecutor:
         except Exception as e:
             print(f"[ToolExecutor] Tavily 搜索失败: {e}")
             return []
-
-    def _llm_search_fallback(self, keyword: str, city: str) -> str:
-        """当搜索引擎结果不可用时，用 LLM 生成岗位市场信息"""
-        if not self.llm_service:
-            return json.dumps(
-                {"keyword": keyword, "city": city, "source": "unavailable",
-                 "results": [], "note": "搜索暂不可用"},
-                ensure_ascii=False,
-            )
-
-        prompt = f"""请根据你的知识，列出当前{city}{keyword}相关的校招/实习岗位市场信息。
-
-输出严格 JSON 格式：
-{{
-    "results": [
-        {{"company": "公司名", "title": "岗位名", "requirements": "核心要求（1句话）", "salary_range": "薪资范围"}},
-        ...
-    ],
-    "market_insight": "1-2句话概括该岗位在该城市的市场情况"
-}}
-
-要求：
-- 列出 3-5 个典型岗位，信息要基于真实市场情况，不要编造不存在的公司
-- 绝对不要生成任何 URL 链接（不要编造 link、href、url 字段）
-- 只输出上面格式中的字段，不要添加额外字段"""
-
-        try:
-            response = self.llm_service.client.chat.completions.create(
-                model=self.llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是一位熟悉中国互联网招聘市场的顾问。输出纯 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.5,
-                response_format={"type": "json_object"},
-            )
-            result = safe_json_parse(response.choices[0].message.content)
-            # 移除 LLM 可能编造的链接字段
-            for item in result.get("results", []):
-                for link_key in ("link", "href", "url"):
-                    item.pop(link_key, None)
-            result["keyword"] = keyword
-            result["city"] = city
-            result["source"] = "llm_knowledge"
-            result["note"] = "以上信息基于AI知识库整理，非实时搜索结果，建议去招聘网站确认最新情况"
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            print(f"[ToolExecutor] LLM 兜底搜索失败: {e}")
-            return json.dumps(
-                {"keyword": keyword, "city": city, "source": "error",
-                 "error": f"搜索失败: {str(e)}"},
-                ensure_ascii=False,
-            )
 
     # --------------------------------------------------
     # 工具 2: 重新评估简历
@@ -378,98 +303,7 @@ class ToolExecutor:
             )
 
     # --------------------------------------------------
-    # 工具 3: 对比 JD
-    # --------------------------------------------------
-
-    def compare_with_jd(self, jd_text: str) -> str:
-        """
-        LLM 分析简历与 JD 匹配度
-
-        Args:
-            jd_text: JD 原文
-
-        Returns:
-            JSON 字符串，包含匹配度分析结果
-        """
-        if not self.llm_service:
-            return json.dumps(
-                {"error": "LLM 服务不可用"},
-                ensure_ascii=False,
-            )
-
-        # 从原始评测中获取简历文本
-        resume_text = ""
-        if self._original_assessment:
-            resume_text = self._original_assessment.get("resume_text", "")
-
-        if not resume_text:
-            return json.dumps(
-                {"error": "未找到简历内容，无法对比"},
-                ensure_ascii=False,
-            )
-
-        resume_preview = resume_text[:3000]
-        jd_preview = jd_text[:2000]
-
-        prompt = f"""请对比以下简历和 JD（岗位描述），做深度匹配分析：
-
-1. **整体匹配度**：用百分比和等级（高度匹配/较好匹配/一般匹配/较低匹配）表示
-2. **JD 底层能力要求解析**：从 JD 中提取 3-5 个核心能力要求，每个说明要求等级
-3. **优势匹配**：简历中与 JD 要求高度吻合的 2-3 个点
-4. **差距分析**：JD 要求但简历中缺失或薄弱的 2-3 个点
-5. **针对性改写建议**：针对每个差距，指出简历中哪个具体段落可以强化，并给出改写方向
-
-输出严格的 JSON 格式：
-{{
-    "match_percentage": 75,
-    "match_level": "较好匹配",
-    "required_abilities": [
-        {{"ability": "数据分析能力", "level": "熟练", "jd_evidence": "JD中原文依据"}},
-        {{"ability": "跨部门协作", "level": "有经验", "jd_evidence": "JD中原文依据"}}
-    ],
-    "strengths": ["优势1", "优势2"],
-    "gaps": [
-        {{"gap": "缺少XX能力体现", "importance": "高/中/低", "resume_section": "可强化的简历段落名"}},
-        {{"gap": "缺少YY经验", "importance": "高/中/低", "resume_section": "可强化的简历段落名"}}
-    ],
-    "tailored_suggestions": [
-        {{"section": "实习经历-XX公司", "current_issue": "当前问题", "rewrite_direction": "改写方向", "target_ability": "对应JD要求的能力"}}
-    ]
-}}
-
-【简历内容】
-{resume_preview}
-
-【JD 内容】
-{jd_preview}"""
-
-        print(f"[ToolExecutor] compare_with_jd: JD 长度={len(jd_text)}")
-
-        try:
-            response = self.llm_service.client.chat.completions.create(
-                model=self.llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是一位专业的招聘顾问，擅长分析简历与 JD 的匹配度。请输出纯 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"},
-            )
-
-            result_text = response.choices[0].message.content
-            # 验证 JSON 合法性（带清洗）
-            result = safe_json_parse(result_text)
-            return json.dumps(result, ensure_ascii=False)
-
-        except Exception as e:
-            print(f"[ToolExecutor] JD 对比失败: {e}")
-            return json.dumps(
-                {"error": f"JD 对比分析失败: {str(e)}"},
-                ensure_ascii=False,
-            )
-
-    # --------------------------------------------------
-    # 工具 4: 抓取网页内容
+    # 工具 3: 抓取网页内容
     # --------------------------------------------------
 
     def fetch_url(self, url: str) -> str:
@@ -588,86 +422,7 @@ class ToolExecutor:
         return text.strip()
 
     # --------------------------------------------------
-    # 工具 5: 一站式 JD 定制改简历
-    # --------------------------------------------------
-
-    def tailor_resume_to_jd(self, jd_text: str) -> str:
-        """
-        一站式链路：解析 JD → 比对简历 → 生成定制化改写建议
-
-        不只是分析匹配度，而是直接输出改写后的简历段落。
-        """
-        if not self.llm_service:
-            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
-
-        resume_text = ""
-        if self._original_assessment:
-            resume_text = self._original_assessment.get("resume_text", "")
-        if not resume_text:
-            return json.dumps({"error": "未找到简历内容"}, ensure_ascii=False)
-
-        resume_preview = resume_text[:3000]
-        jd_preview = jd_text[:2000]
-
-        prompt = f"""你是一位简历定制专家。请完成以下三步一站式任务：
-
-**第一步：解析 JD 核心要求**
-从 JD 中提取 3-5 个核心能力要求。
-
-**第二步：识别简历差距**
-对比简历与 JD 要求，找出 2-3 个最关键的差距。
-
-**第三步：直接改写**
-针对每个差距，直接给出简历对应段落的改写版本（不是建议，是完成改写后的文本）。
-改写规则：
-- 基于简历已有信息润色，不编造经历
-- 用 STAR 结构强化
-- 突出与 JD 匹配的关键词和能力
-- 缺少数据的地方用 [待补充: 具体数字] 标记
-
-输出严格 JSON：
-{{
-    "jd_summary": "JD 一句话概括",
-    "core_requirements": [
-        {{"ability": "能力名", "importance": "核心/重要/加分"}}
-    ],
-    "tailored_rewrites": [
-        {{
-            "section": "简历段落名",
-            "original": "原文（简短引用）",
-            "rewritten": "改写后的完整段落文本（可直接替换）",
-            "improvement": "这次改写强化了什么能力，与 JD 的哪条要求匹配"
-        }}
-    ],
-    "overall_match_after": "改写后预估匹配度提升（如 60% → 78%）"
-}}
-
-【简历内容】
-{resume_preview}
-
-【JD 内容】
-{jd_preview}"""
-
-        print(f"[ToolExecutor] tailor_resume_to_jd: JD 长度={len(jd_text)}")
-
-        try:
-            response = self.llm_service.client.chat.completions.create(
-                model=self.llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是一位简历定制专家，擅长根据 JD 要求精准改写简历。输出纯 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.4,
-                response_format={"type": "json_object"},
-            )
-            result = safe_json_parse(response.choices[0].message.content)
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            print(f"[ToolExecutor] 一站式定制失败: {e}")
-            return json.dumps({"error": f"定制改写失败: {str(e)}"}, ensure_ascii=False)
-
-    # --------------------------------------------------
-    # 工具 6: 岗位真伪识别
+    # 可信度评估（供 search_jobs 使用）
     # --------------------------------------------------
 
     # 可信域名评级
@@ -749,133 +504,8 @@ class ToolExecutor:
             "warnings": warnings,
         }
 
-    def verify_job_posting(self, jd_text: str) -> str:
-        """
-        使用 LLM 分析一份 JD 是否存在虚假招聘特征
-        """
-        if not self.llm_service:
-            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
-
-        jd_preview = jd_text[:2000]
-
-        prompt = f"""请分析以下岗位描述是否存在虚假招聘的特征。
-
-从以下维度检查：
-1. 是否要求求职者缴纳费用（培训费、押金、报名费等）
-2. 薪资是否与岗位要求明显不匹配（要求低但薪资极高）
-3. 公司信息是否模糊（无明确公司名、地址不详）
-4. 是否有培训机构伪装招聘的迹象（"包就业"、"零基础转行"）
-5. 岗位描述是否过于空泛、缺少具体工作内容
-6. 是否存在常见骗局话术
-
-输出 JSON：
-{{
-    "credibility_score": 85,
-    "risk_level": "低风险/中风险/高风险",
-    "is_likely_genuine": true,
-    "risk_factors": ["风险因素1（如有）"],
-    "positive_signals": ["可信信号1"],
-    "advice": "一句话建议"
-}}
-
-【JD 内容】
-{jd_preview}"""
-
-        try:
-            response = self.llm_service.client.chat.completions.create(
-                model=self.llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是一位招聘市场安全专家，擅长识别虚假招聘。输出纯 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"},
-            )
-            result = safe_json_parse(response.choices[0].message.content)
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            print(f"[ToolExecutor] 真伪识别失败: {e}")
-            return json.dumps({"error": f"真伪识别失败: {str(e)}"}, ensure_ascii=False)
-
     # --------------------------------------------------
-    # 工具 7: 多 JD 横向对比
-    # --------------------------------------------------
-
-    def compare_multiple_jds(self, jd_list: list) -> str:
-        """
-        横向对比多个 JD 与简历的匹配度，推荐最适合的岗位
-
-        Args:
-            jd_list: [{"title": "岗位名", "jd_text": "JD全文"}, ...]
-        """
-        if not self.llm_service:
-            return json.dumps({"error": "LLM 服务不可用"}, ensure_ascii=False)
-
-        resume_text = ""
-        if self._original_assessment:
-            resume_text = self._original_assessment.get("resume_text", "")
-        if not resume_text:
-            return json.dumps({"error": "未找到简历内容"}, ensure_ascii=False)
-
-        if not jd_list or len(jd_list) < 2:
-            return json.dumps({"error": "至少需要 2 个 JD 进行对比"}, ensure_ascii=False)
-
-        resume_preview = resume_text[:2500]
-        jds_text = ""
-        for i, jd in enumerate(jd_list[:4]):  # 最多 4 个
-            title = jd.get("title", f"岗位{i+1}")
-            text = jd.get("jd_text", "")[:1200]
-            jds_text += f"\n\n--- JD {i+1}: {title} ---\n{text}"
-
-        prompt = f"""请将以下简历与多个 JD 进行横向对比，找出最匹配的岗位。
-
-对每个 JD：
-1. 计算匹配度百分比
-2. 列出 2 个优势和 2 个差距
-3. 给出投递优先级建议
-
-最后给出推荐排序。
-
-输出 JSON：
-{{
-    "comparisons": [
-        {{
-            "jd_title": "岗位名",
-            "match_percentage": 75,
-            "match_level": "较好匹配",
-            "strengths": ["优势1", "优势2"],
-            "gaps": ["差距1", "差距2"],
-            "priority": "推荐投递/可以尝试/匹配度较低"
-        }}
-    ],
-    "recommendation": "综合建议（1-2句话，推荐先投哪个、为什么）",
-    "ranking": ["岗位名1（最推荐）", "岗位名2", "岗位名3"]
-}}
-
-【简历内容】
-{resume_preview}
-
-【JD 列表】
-{jds_text}"""
-
-        try:
-            response = self.llm_service.client.chat.completions.create(
-                model=self.llm_service.model,
-                messages=[
-                    {"role": "system", "content": "你是一位资深招聘顾问。输出纯 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"},
-            )
-            result = safe_json_parse(response.choices[0].message.content)
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            print(f"[ToolExecutor] 多JD对比失败: {e}")
-            return json.dumps({"error": f"多JD对比失败: {str(e)}"}, ensure_ascii=False)
-
-    # --------------------------------------------------
-    # 工具 8-10: 多版本简历管理
+    # 工具 4-6: 多版本简历管理
     # --------------------------------------------------
 
     def save_resume_version(self, label: str, resume_text: str, target_jd: str = "") -> str:

@@ -66,23 +66,6 @@ OPTIMIZE_AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "compare_with_jd",
-            "description": "将用户的简历与指定的 JD（岗位描述）进行匹配度分析，找出优势和差距。当用户提供了一个 JD 并想知道自己简历与之匹配程度时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "jd_text": {
-                        "type": "string",
-                        "description": "JD（岗位描述）的完整文本"
-                    }
-                },
-                "required": ["jd_text"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "fetch_url",
             "description": "抓取指定网页的内容，提取正文文本。当你需要查看 search_jobs 返回的某个链接的完整 JD 内容时调用。也可用于抓取用户提供的任意招聘页面链接。",
             "parameters": {
@@ -94,65 +77,6 @@ OPTIMIZE_AGENT_TOOLS = [
                     }
                 },
                 "required": ["url"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "tailor_resume_to_jd",
-            "description": "一站式 JD 定制改简历：解析 JD 的核心能力要求 → 比对简历差距 → 直接生成针对该 JD 定制化改写的简历段落。当用户提供了 JD 并希望直接获得定制化改写时调用（比 compare_with_jd 更进一步，不只分析还直接改写）。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "jd_text": {
-                        "type": "string",
-                        "description": "JD（岗位描述）的完整文本"
-                    }
-                },
-                "required": ["jd_text"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "verify_job_posting",
-            "description": "识别一份岗位信息是否可能是虚假招聘（培训机构伪装、中介骗局、挂名岗位等）。当搜索结果中有可疑信息，或用户想验证某个岗位的真实性时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "jd_text": {
-                        "type": "string",
-                        "description": "需要验证的岗位描述文本"
-                    }
-                },
-                "required": ["jd_text"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "compare_multiple_jds",
-            "description": "横向对比多个 JD 与用户简历的匹配度，推荐最适合的岗位。当用户同时考虑多个岗位方向，想知道哪个更适合时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "jd_list": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string", "description": "岗位名称"},
-                                "jd_text": {"type": "string", "description": "JD 全文"}
-                            },
-                            "required": ["title", "jd_text"]
-                        },
-                        "description": "JD 列表，2-4 个"
-                    }
-                },
-                "required": ["jd_list"]
             }
         }
     },
@@ -604,18 +528,21 @@ class OptimizeAgent:
 你拥有以下工具，可以在对话中主动调用：
 - search_jobs：搜索市场岗位信息。仅当用户**明确要求搜索岗位**时使用，用户说"帮我改简历"时不要调这个。
 - re_evaluate_resume：重新评估优化后的简历，生成新的能力评分并与之前做对比。
-- compare_with_jd：将简历与 JD 做匹配分析。
-- tailor_resume_to_jd：一站式 JD 定制改简历（核心能力）。解析 JD → 比对差距 → 直接输出定制化改写。当用户提供了 JD 时优先用这个。
 - fetch_url：抓取网页内容，获取完整 JD 或招聘链接。
-- verify_job_posting：识别岗位信息是否可能是虚假招聘。
-- compare_multiple_jds：横向对比多个 JD，推荐最适合的岗位。
 - save_resume_version / list_resume_versions / switch_resume_version：简历多版本管理。
 调用工具前先用一句自然语言告知用户你在做什么，不要静默调用。
+
+【你可以直接完成的分析任务（无需工具）】
+以下任务你直接在回复中完成，不要调用工具：
+- JD 对比分析：用户提供 JD 时，直接分析简历与 JD 的匹配度（优势、差距、改写建议）
+- JD 定制改写：解析 JD 核心要求 → 找出差距 → 直接输出改写后的简历段落
+- 岗位真伪识别：用户对某个招聘信息有疑虑时，直接分析是否存在虚假招聘特征
+- 多 JD 横向对比：用户同时考虑多个岗位时，直接对比匹配度并给出推荐
 
 【核心产品链路】
 
 1. JD 定制改写（核心能力，主动推动）：
-   用户提供 JD（文本/链接/搜索结果）→ 如果是链接先 fetch_url → 调 tailor_resume_to_jd 直接输出定制化改写 → 确认后建议 save_resume_version。
+   用户提供 JD（文本/链接/搜索结果）→ 如果是链接先 fetch_url 获取内容 → 直接分析 JD 并输出定制化改写 → 确认后建议 save_resume_version。
    不要只分析不改写，用户的期望是"给你 JD，你直接帮我改好"。
    链路中途不要停下来重复上一步。用户说"好/继续/可以"时接着执行下一步，不要重新搜索。
 
@@ -631,12 +558,11 @@ class OptimizeAgent:
 
 【信息安全】
 - search_jobs 返回 trust_level="低" 或 warnings 时，必须主动警告用户具体风险
-- 可疑 JD 主动调 verify_job_posting 鉴别
+- 用户对某个 JD 有疑虑时，直接分析是否存在虚假招聘特征（收费要求、薪资异常、公司模糊、培训伪装等）
 
 【搜索结果展示】
 - 列出每条结果的标题和实际URL（用工具返回的 link 字段），让用户可点击查看原文
 - 搜索为空时如实告知，建议用户直接发 JD 给你或换关键词
-- source 为 "llm_knowledge" 时说明这是已有信息，建议用户去招聘网站确认
 
 【模拟面试】
 用户选择模拟面试时，先确认目标岗位和面试类型，然后每次只问1个问题，等用户回答后给出具体反馈和示范回答。基于简历内容和目标岗位设计问题，语气像真正的面试官：专业但友善。
@@ -684,7 +610,7 @@ EDIT>>>
     TEMPERATURE = 0.4
 
     # 工具调用最大循环次数（防止无限调用）
-    # 提升到 5 轮以支持多步链路：如 search→fetch_url→tailor_resume_to_jd→save_version
+    # 支持多步链路：如 search→fetch_url→save_version
     MAX_TOOL_ROUNDS = 5
 
     def __init__(self, client: OpenAI, model: str, tool_executor=None):
