@@ -199,6 +199,7 @@ class DiagnosisAgent:
                         {"role": "user", "content": user_prompt}
                     ],
                     temperature=self.TEMPERATURE,
+                    max_tokens=256,  # 开场白只需60-120字，限制输出避免thinking过久
                 )
                 return response.choices[0].message.content.strip()
             except Exception as e:
@@ -252,7 +253,8 @@ class DiagnosisAgent:
             for name, info in abilities.items()
         ) if isinstance(abilities, dict) else "  暂无能力数据"
 
-        resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
+        # 开场白只需简历摘要（800字足够识别亮点），减少输入token降低thinking耗时
+        resume_preview = resume_text[:800] if len(resume_text) > 800 else resume_text
 
         # 找出偏弱的能力维度
         weak_abilities = []
