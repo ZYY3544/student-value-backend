@@ -20,7 +20,7 @@ from salary_calculator import SalaryCalculator
 from ability_mapper import map_factors_to_dimensions, get_dimension_radar_data, get_dimension_summary
 from calculator import calculate_hay_evaluation
 from level_tags import get_level_tag_and_desc, get_ability_score
-from salary_competitiveness import calculate_salary_competitiveness
+# salary_competitiveness 已移除（前端不再显示市场薪酬板块）
 from school_mapper import identify_school_tier
 from student_coefficients import apply_student_coefficients, format_salary_k
 from resume_expression import evaluate_resume_expression
@@ -926,10 +926,6 @@ def assess():
         # 7. AI 深度评估已移除（功能由聊天 Agent 承接）
         is_insufficient = bool(convergence_result and convergence_result.get('insufficient_input'))
 
-        # 计算薪酬竞争力百分位
-        salary_competitiveness = calculate_salary_competitiveness(job_function, job_grade)
-        print(f"[步骤5b] 薪酬竞争力: 超过{salary_competitiveness}%的同职能从业者")
-
         # 8. 生成 Sparky 开场白（DiagnosisAgent，利用评估结果生成个性化欢迎语）
         _t['greeting_start'] = time.time()
         _greeting = ''
@@ -1088,7 +1084,6 @@ def assess():
             'abilities': abilities,
             'radarData': radar_data,
             'abilitySummary': ability_summary,
-            'abilityCompetitiveness': salary_competitiveness,
 
             # ====================================
             # Part 2: 简历表达力诊断（写作质量，可通过改写提升）
@@ -1111,7 +1106,6 @@ def assess():
                 'industry': industry,
                 'function': job_function,
             },
-            'salaryCompetitiveness': salary_competitiveness,
 
             # 学生版附加信息
             'schoolTier': school_tier,
