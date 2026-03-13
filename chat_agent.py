@@ -285,11 +285,15 @@ class SessionManager:
             return []
         try:
             resp = _supabase_client.table('resume_versions') \
-                .select('version_id, label, target_jd, resume_text') \
+                .select('session_id, label, target_jd, resume_text') \
                 .eq('user_id', user_id) \
                 .order('created_at', desc=True) \
                 .limit(20) \
                 .execute()
+            # session_id 作为 version_id 使用
+            for item in (resp.data or []):
+                if 'session_id' in item and 'version_id' not in item:
+                    item['version_id'] = item['session_id']
             return resp.data or []
         except Exception as e:
             print(f"[Supabase] 加载简历版本失败: {e}")

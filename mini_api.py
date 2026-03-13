@@ -927,31 +927,18 @@ def assess():
         is_insufficient = bool(convergence_result and convergence_result.get('insufficient_input'))
 
         # 8. 生成 Sparky 开场白（DiagnosisAgent，利用评估结果生成个性化欢迎语）
+        # 8. 快速开场白（模板拼接，0秒；LLM个性化开场白在 /chat/start 时生成）
         _t['greeting_start'] = time.time()
-        _greeting = ''
-        if chat_agent:
-            try:
-                _greeting_ctx = {
-                    'factors': factors,
-                    'abilities': abilities,
-                    'grade': job_grade,
-                    'salaryRange': salary_range,
-                    'jobTitle': job_title,
-                    'jobFunction': job_function,
-                    'educationLevel': education_level,
-                    'major': major,
-                    'city': raw_city,
-                    'industry': industry,
-                    'companyType': company_type,
-                    'targetCompany': target_company,
-                }
-                # 使用 GLM-4-Plus 生成开场白
-                from multi_agent import DiagnosisAgent
-                _greeting_agent = DiagnosisAgent(model_router.glm_client, model_router.glm_model_plus)
-                _greeting = _greeting_agent.diagnose(_greeting_ctx, resume_text)
-                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字，模型: {model_router.glm_model_plus}）")
-            except Exception as e:
-                print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
+        # 找出最强能力维度
+        _strong_dim = ''
+        if abilities and isinstance(abilities, dict):
+            _sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get('score', 0), reverse=True)
+            if _sorted_abs:
+                _strong_dim = _sorted_abs[0][0]
+        _target_part = f"，看到你的目标是{job_title}方向" if job_title else ""
+        _strong_part = f"你在{_strong_dim}方面表现突出" if _strong_dim else "已经看过你的评估结果了"
+        _greeting = f"嗨，我是 Sparky！已经看过你的评估结果和简历了{_target_part}。{_strong_part}，我可以帮你解读报告、优化简历、定制改写，你想先从哪里开始？"
+        print(f"[步骤8] 模板开场白（{len(_greeting)}字，0s）")
         _t['greeting_end'] = time.time()
 
         # 9. 后台启动简历结构拆分（不阻塞返回，用户打开画布时取用）
@@ -1167,7 +1154,7 @@ def assess():
         print(f"  4. 能力维度映射:               {_abi:.3f}s")
         print(f"  5. 趣味标签生成:               {_tag:.3f}s")
         print(f"  6. PostgreSQL日志写入:          {_db:.2f}s  ← {'⚠️ 慢!' if _db > 1 else '✓'}")
-        print(f"  7. Sparky开场白（LLM）:         {_greet:.2f}s  ← {'⚠️ 慢!' if _greet > 5 else '✓'}")
+        print(f"  7. Sparky开场白（模板）:         {_greet:.2f}s  ← ✓")
         print(f"  8. Supabase存储:               {_supa:.2f}s  ← {'⚠️ 慢!' if _supa > 1 else '✓'}")
         print(f"{'=' * 60}\n")
 
