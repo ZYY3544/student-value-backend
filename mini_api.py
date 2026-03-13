@@ -437,23 +437,36 @@ PERMANENT_INVITE_CODES = {c.strip().upper() for c in _raw_permanent_codes.split(
 USED_CODES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'used_invite_codes.json')
 _codes_lock = threading.Lock()
 
-def _load_used_codes() -> set:
-    """从文件加载已使用的邀请码"""
+INVITE_CODE_TTL = 24 * 3600  # 验证码有效期：24小时
+
+def _load_used_codes() -> dict:
+    """从文件加载已使用的邀请码（带时间戳）"""
     try:
         if os.path.exists(USED_CODES_FILE):
             with open(USED_CODES_FILE, 'r') as f:
-                return set(json.load(f))
+                data = json.load(f)
+                # 兼容旧格式（list → dict）
+                if isinstance(data, list):
+                    return {code: 0 for code in data}
+                return data
     except Exception as e:
         print(f"[邀请码] 加载已使用码失败: {e}")
-    return set()
+    return {}
 
-def _save_used_codes(used: set):
-    """将已使用的邀请码持久化到文件"""
+def _save_used_codes(used: dict):
+    """将已使用的邀请码持久化到文件（{code: timestamp}）"""
     try:
         with open(USED_CODES_FILE, 'w') as f:
-            json.dump(list(used), f)
+            json.dump(used, f)
     except Exception as e:
         print(f"[邀请码] 保存已使用码失败: {e}")
+
+def _is_code_expired(code: str) -> bool:
+    """检查验证码是否已过期（24小时）"""
+    first_used = USED_INVITE_CODES.get(code, 0)
+    if first_used == 0:
+        return False  # 旧数据没有时间戳，视为未过期
+    return (time.time() - first_used) > INVITE_CODE_TTL
 
 USED_INVITE_CODES = _load_used_codes()
 
@@ -485,9 +498,9 @@ ALL_VALID_CODES = INVITE_CODES_ALL | PERMANENT_INVITE_CODES
 
 print(f"[邀请码] 一次性邀请码: {INVITE_CODES_ALL}")
 print(f"[邀请码] 永久邀请码: {PERMANENT_INVITE_CODES}")
-print(f"[邀请码] 已使用邀请码: {USED_INVITE_CODES}")
+print(f"[邀请码] 已使用邀请码: {set(USED_INVITE_CODES.keys())}")
 print(f"[邀请码] 已消耗邀请码: {CONSUMED_INVITE_CODES}")
-print(f"[邀请码] 一次性剩余可用: {INVITE_CODES_ALL - USED_INVITE_CODES - CONSUMED_INVITE_CODES}")
+print(f"[邀请码] 一次性剩余可用: {INVITE_CODES_ALL - set(USED_INVITE_CODES.keys()) - CONSUMED_INVITE_CODES}")
 
 
 # ===========================================
@@ -677,16 +690,22 @@ def verify_invite():
     with _codes_lock:
         # 已消耗（评估完成）的码彻底失效
         if code in CONSUMED_INVITE_CODES:
-            return jsonify({'success': False, 'error': '该邀请码已被使用'}), 400
+            return jsonify({'success': False, 'error': '该验证码已失效'}), 400
 
+        # 检查是否已使用且过期
         if code in USED_INVITE_CODES:
-            return jsonify({'success': False, 'error': '该邀请码已被使用'}), 400
+            if _is_code_expired(code):
+                return jsonify({'success': False, 'error': '该验证码已过期（有效期24小时）'}), 400
+            # 未过期，允许继续使用（同一个码24h内可反复登录）
+            remaining_h = max(0, (INVITE_CODE_TTL - (time.time() - USED_INVITE_CODES[code])) / 3600)
+            print(f"[验证码] {code} 验证通过（剩余 {remaining_h:.1f}h）")
+            return jsonify({'success': True}), 200
 
-        # 标记为已使用
-        USED_INVITE_CODES.add(code)
+        # 首次使用，记录时间戳
+        USED_INVITE_CODES[code] = time.time()
         _save_used_codes(USED_INVITE_CODES)
 
-    print(f"[邀请码] 一次性码 {code} 验证通过并已消耗，剩余: {INVITE_CODES_ALL - USED_INVITE_CODES}")
+    print(f"[验证码] {code} 首次验证通过（24h有效），剩余: {INVITE_CODES_ALL - set(USED_INVITE_CODES.keys())}")
     return jsonify({'success': True}), 200
 
 
