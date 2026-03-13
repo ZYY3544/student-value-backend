@@ -188,10 +188,13 @@ class DiagnosisAgent:
             诊断开场白文本
         """
         user_prompt = self._build_input(assessment_context, resume_text)
+        print(f"[DiagnosisAgent] system_prompt={len(self.SYSTEM_PROMPT)}字, user_prompt={len(user_prompt)}字, 模型={self.model}")
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                import time as _t
+                _start = _t.time()
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -200,7 +203,10 @@ class DiagnosisAgent:
                     ],
                     temperature=self.TEMPERATURE,
                 )
-                return response.choices[0].message.content.strip()
+                _elapsed = _t.time() - _start
+                result_text = response.choices[0].message.content.strip()
+                print(f"[DiagnosisAgent] LLM响应: {_elapsed:.1f}s, 输出{len(result_text)}字")
+                return result_text
             except Exception as e:
                 error_str = str(e)
                 if '429' in error_str and attempt < max_retries - 1:
