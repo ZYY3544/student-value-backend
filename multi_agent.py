@@ -199,7 +199,6 @@ class DiagnosisAgent:
                         {"role": "user", "content": user_prompt}
                     ],
                     temperature=self.TEMPERATURE,
-                    max_tokens=256,  # 开场白只需60-120字，限制输出避免thinking过久
                 )
                 return response.choices[0].message.content.strip()
             except Exception as e:
