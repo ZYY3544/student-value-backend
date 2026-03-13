@@ -880,8 +880,11 @@ EDIT>>>
             system_prompt += self.CANVAS_MODE_PROMPT
         messages = [{"role": "system", "content": system_prompt}]
 
-        # 构建上下文
-        context = self._build_context(ctx, resume_text, conversation_summary, memory_context, optimization_plan)
+        # 构建上下文（按需注入：根据对话阶段决定带什么）
+        context = self._build_context(
+            ctx, resume_text, conversation_summary, memory_context, optimization_plan,
+            user_message=user_message, canvas_mode=canvas_mode, has_history=bool(recent_messages),
+        )
 
         # 去掉 recent_messages 末尾的当前用户消息（避免重复）
         history = list(recent_messages) if recent_messages else []
@@ -906,51 +909,57 @@ EDIT>>>
 
         return messages
 
+    # 判断用户消息是否涉及简历内容的关键词
+    _RESUME_KEYWORDS = (
+        "简历", "改", "优化", "修改", "改写", "重写", "润色",
+        "经历", "实习", "项目", "段落", "描述", "JD", "jd",
+        "投递", "定制", "STAR", "star", "量化",
+    )
+
+    def _need_resume(self, user_message: str, canvas_mode: bool, has_history: bool) -> bool:
+        """判断本轮是否需要注入简历原文"""
+        # 画布模式始终需要简历（用户在编辑）
+        if canvas_mode:
+            return True
+        # 第一轮对话始终需要（Agent 要了解简历）
+        if not has_history:
+            return True
+        # 用户消息提到了简历相关内容
+        msg_lower = user_message.lower()
+        return any(kw in msg_lower for kw in self._RESUME_KEYWORDS)
+
     def _build_context(
         self, ctx: dict, resume_text: str,
         conversation_summary: str, memory_context: str,
         optimization_plan: dict = None,
+        user_message: str = "", canvas_mode: bool = False, has_history: bool = False,
     ) -> str:
-        """构建上下文信息"""
-        factors = ctx.get("factors", {})
+        """
+        构建上下文信息（按需注入，节省 token）
+
+        策略：
+        - 评测结果：只注入偏弱维度（前3），省略表现良好的
+        - 简历原文：仅在涉及简历操作时注入，闲聊/面试/方向讨论时省略
+        - 优化计划：只注入优先级最高的前2条，而非完整计划
+        """
         abilities = ctx.get("abilities", {})
 
-        factor_names = {
-            "practical_knowledge": "专业力",
-            "managerial_knowledge": "管理力",
-            "communication": "合作力",
-            "thinking_environment": "思辨力",
-            "thinking_challenge": "创新力",
-            "freedom_to_act": "管理力(FTA)",
-            "magnitude": "创新力(M)",
-            "nature_of_impact": "合作力(NI)",
-        }
-
-        factors_text = "\n".join(
-            f"  - {factor_names.get(k, k)}: {v}"
-            for k, v in factors.items()
-        )
-
+        # --- 评测结果：只保留基本信息 + 偏弱维度 ---
         if isinstance(abilities, dict) and abilities:
-            # 按分数排序，标注偏弱维度
             sorted_abilities = sorted(
                 abilities.items(),
                 key=lambda x: x[1].get('score', 0) if isinstance(x[1], dict) else 0
             )
-            abilities_lines = []
-            for i, (name, info) in enumerate(sorted_abilities):
+            # 只展示偏弱的前3个维度
+            weak_lines = []
+            for name, info in sorted_abilities[:3]:
                 if isinstance(info, dict):
                     score = info.get('score', '?')
                     level = info.get('level', '?')
-                    weak_tag = " ⚠ 偏弱维度" if i < 3 else ""
-                    abilities_lines.append(f"  - {name}: {score}分 ({level}){weak_tag}")
-                else:
-                    abilities_lines.append(f"  - {name}: {info}")
-            abilities_text = "\n".join(abilities_lines)
+                    weak_lines.append(f"  - {name}: {score}分 ({level})")
+            abilities_text = "\n".join(weak_lines) if weak_lines else "  暂无"
         else:
             abilities_text = "  暂无"
-
-        resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
 
         parts = []
 
@@ -959,28 +968,36 @@ EDIT>>>
 
         parts.append(f"""=== 评测结果 ===
 学历: {ctx.get('educationLevel', '未知')} | 专业: {ctx.get('major', '未知')}
-意向城市: {ctx.get('city', '未知')} | 意向行业: {ctx.get('industry', '未知')}
-企业性质: {ctx.get('companyType', '未知')} | 意向企业: {ctx.get('targetCompany', '未知')}
-目标岗位: {ctx.get('jobTitle', '未知')} | 职能: {ctx.get('jobFunction', '未知')}
+意向城市: {ctx.get('city', '未知')} | 目标岗位: {ctx.get('jobTitle', '未知')}
+意向行业: {ctx.get('industry', '未知')} | 职能: {ctx.get('jobFunction', '未知')}
 薪酬: {ctx.get('salaryRange', '未知')}
 
-5维能力档位:
-{factors_text}
-
-5维能力:
+待提升维度:
 {abilities_text}
 === /评测结果 ===""")
 
-        parts.append(f"=== 简历原文 ===\n{resume_preview}\n=== /简历原文 ===")
+        # --- 简历原文：按需注入 ---
+        if self._need_resume(user_message, canvas_mode, has_history):
+            resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
+            parts.append(f"=== 简历原文 ===\n{resume_preview}\n=== /简历原文 ===")
 
         if memory_context:
             parts.append(f"=== 记忆上下文 ===\n{memory_context}\n=== /记忆上下文 ===")
 
+        # --- 优化计划：只注入优先级最高的前2条 ---
         if optimization_plan:
             try:
-                plan_text = json.dumps(optimization_plan, ensure_ascii=False, indent=2)
-                parts.append(f"=== 优化计划 ===\n{plan_text}\n=== /优化计划 ===")
-            except (TypeError, ValueError):
+                plan_items = optimization_plan.get("plan_items", [])
+                # 按 priority 排序，只取前2条
+                top_items = sorted(plan_items, key=lambda x: x.get("priority", 99))[:2]
+                if top_items:
+                    slim_plan = {
+                        "user_stage": optimization_plan.get("user_stage", ""),
+                        "plan_items": top_items,
+                    }
+                    plan_text = json.dumps(slim_plan, ensure_ascii=False, indent=2)
+                    parts.append(f"=== 优化计划（重点） ===\n{plan_text}\n=== /优化计划 ===")
+            except (TypeError, ValueError, AttributeError):
                 pass
 
         return "\n\n".join(parts)
