@@ -1435,15 +1435,16 @@ def chat_start():
         resume_sections = data.get('resumeSections')  # 评测阶段预拆分的段落
         preloaded_greeting = data.get('greeting')    # 评估阶段预生成的开场白
 
-        # 尝试从评估阶段的后台拆分缓存中取用简历段落
+        # 尝试从评估阶段的后台拆分缓存中取用简历段落（非阻塞：只取已完成的结果）
         if not resume_sections:
             _split_key = hash(resume_text)
             pending = _pending_splits.pop(_split_key, None)
             if pending:
-                pending["thread"].join(timeout=10)  # 等待后台线程完成（通常已经跑了几秒了）
-                if pending["result"][0]:
+                if not pending["thread"].is_alive() and pending["result"][0]:
                     resume_sections = pending["result"][0]
                     print(f"[Agent API] 从评估阶段缓存获取简历段落（{len(resume_sections)} 段）")
+                else:
+                    print(f"[Agent API] 评估阶段拆分未完成，跳过等待，交由 start_session 后台处理")
         result = chat_agent.start_session(
             assessment_context=assessment_context,
             resume_text=resume_text,
