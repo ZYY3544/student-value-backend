@@ -797,26 +797,33 @@ class ChatAgent:
         # 后台任务共用的 client/model（提前绑定，避免分支遗漏）
         _bg_client, _bg_model = active_client, active_model
 
-        # 简历结构拆分：如果评测阶段已预拆分，直接使用；否则同步拆分（确保 sections 随 start 响应返回）
+        # 简历结构拆分：如果评测阶段已预拆分，直接使用；否则后台异步拆分（不阻塞 start 响应）
         if resume_sections and isinstance(resume_sections, list) and len(resume_sections) > 0:
             self.session_manager.update_session(session_id, {
                 "resume_sections": resume_sections
             })
             print(f"[Orchestrator] 使用预拆分简历段落（{len(resume_sections)} 段），跳过 LLM 拆分")
         else:
-            # 同步拆分，带兜底：确保一定有 sections 返回
-            try:
-                resume_sections = split_resume_sections(_bg_client, self._model_flash, resume_text)
-                self.session_manager.update_session(session_id, {
-                    "resume_sections": resume_sections
-                })
-                print(f"[Orchestrator] 同步简历拆分完成（{len(resume_sections)} 段）")
-            except Exception as e:
-                print(f"[Orchestrator] 简历拆分失败，使用整篇兜底: {e}")
-                resume_sections = [{"type": "other", "title": "完整简历", "content": resume_text[:3000]}]
-                self.session_manager.update_session(session_id, {
-                    "resume_sections": resume_sections
-                })
+            # 后台异步拆分，不阻塞 /chat/start 响应
+            _split_client, _split_model = _bg_client, self._model_flash
+            _split_session_id = session_id
+            _split_sm = self.session_manager
+            def _bg_split():
+                try:
+                    sections = split_resume_sections(_split_client, _split_model, resume_text)
+                    _split_sm.update_session(_split_session_id, {
+                        "resume_sections": sections
+                    })
+                    print(f"[Orchestrator] 后台简历拆分完成（{len(sections)} 段）")
+                except Exception as e:
+                    print(f"[Orchestrator] 后台简历拆分失败，使用整篇兜底: {e}")
+                    _split_sm.update_session(_split_session_id, {
+                        "resume_sections": [{"type": "other", "title": "完整简历", "content": resume_text[:3000]}]
+                    })
+            threading.Thread(target=_bg_split, daemon=True).start()
+            # 先给一个临时的整篇兜底，后台线程完成后会覆盖
+            resume_sections = [{"type": "other", "title": "完整简历", "content": resume_text[:3000]}]
+            print(f"[Orchestrator] 简历拆分已移至后台，先返回临时整篇段落")
 
         # 后台线程生成优化计划（PlanningAgent → GLM-4-Plus）
         _bg_planning = self.planning_agent  # 已在 __init__ 中用 Plus 模型初始化
