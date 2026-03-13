@@ -19,10 +19,12 @@ from validation_rules import validation_rules
 from salary_calculator import SalaryCalculator
 from ability_mapper import map_factors_to_dimensions, get_dimension_radar_data, get_dimension_summary
 from calculator import calculate_hay_evaluation
-from level_tags import get_level_tag_and_desc
+from level_tags import get_level_tag_and_desc, get_ability_score
 from salary_competitiveness import calculate_salary_competitiveness
 from school_mapper import identify_school_tier
 from student_coefficients import apply_student_coefficients, format_salary_k
+from resume_expression import evaluate_resume_expression
+from job_comparison import compare_jobs, get_recommended_job
 
 import traceback
 import base64
@@ -756,6 +758,15 @@ def assess():
         # 职能验证（前后端选项已一致，直接使用）
         job_function = job_function_raw if job_function_raw in VALID_FUNCTIONS else DEFAULT_FUNCTION
 
+        # 多岗位对比：支持 jobFunctions 数组（最多3个），向后兼容单个 jobFunction
+        compare_functions_raw = data.get('jobFunctions', [])
+        compare_functions = [f for f in compare_functions_raw if f in VALID_FUNCTIONS][:3]
+        # 确保主岗位在对比列表中
+        if not compare_functions:
+            compare_functions = [job_function]
+        elif job_function not in compare_functions:
+            compare_functions.insert(0, job_function)
+
         # 参数校验
         if not job_title:
             return jsonify({'success': False, 'error': '请填写职位名称'}), 400
@@ -898,7 +909,7 @@ def assess():
 
         # 计算薪酬竞争力百分位
         salary_competitiveness = calculate_salary_competitiveness(job_function, job_grade)
-        print(f"[步骤7] 薪酬竞争力: 超过{salary_competitiveness}%的同职能从业者")
+        print(f"[步骤5b] 薪酬竞争力: 超过{salary_competitiveness}%的同职能从业者")
 
         # 8. 生成 Sparky 开场白（DiagnosisAgent，利用评估结果生成个性化欢迎语）
         _t['greeting_start'] = time.time()
@@ -1020,19 +1031,60 @@ def assess():
         print(f"耗时: {elapsed_time:.2f}秒")
         print(f"══════════════════════════════════════════\n")
 
+        # ===========================================
+        # Part 2: 简历表达力诊断
+        # ===========================================
+        print("[步骤6] 简历表达力诊断...")
+        expression_result = evaluate_resume_expression(resume_text, job_function)
+
+        # ===========================================
+        # Part 3: 多岗位对比
+        # ===========================================
+        print(f"[步骤7] 多岗位对比: {compare_functions}")
+        job_comparisons = compare_jobs(
+            abilities=abilities,
+            job_functions=compare_functions,
+            job_grade=job_grade,
+            industry=industry,
+            city=city,
+            school_tier=school_tier,
+            education_level=education_level,
+            salary_calculator=salary_calculator,
+        )
+
+        # 推荐岗位（基于能力结构推荐一个用户可能没想到的岗位）
+        recommended_job = get_recommended_job(abilities, job_function)
+
+        # Part 1: 能力评分（0-100）
+        ability_score = get_ability_score(job_grade, total_score)
+
         response_data = {
-            # === 能力评估（纯简历驱动） ===
+            # ====================================
+            # Part 1: 能力画像（HAY驱动，不随改写变化）
+            # ====================================
             'level': job_grade,
-            'levelTag': level_tag,
-            'levelDesc': level_desc,
+            'abilityScore': ability_score,      # 0-100 能力评分（新增）
+            'levelTag': level_tag,              # 专业段位名称（如"独立执行者"）
+            'levelDesc': level_desc,            # 段位描述
             'abilities': abilities,
             'radarData': radar_data,
             'abilitySummary': ability_summary,
-            'abilityCompetitiveness': salary_competitiveness,  # 能力百分位 0-100（基于职级在同届中的排名）
-            'resumeHealthScore': _calc_resume_health(abilities),
+            'abilityCompetitiveness': salary_competitiveness,
 
-            # === 市场薪酬参考（城市/行业/职能驱动） ===
-            'salaryRange': salary_range,  # 保留以兼容旧前端
+            # ====================================
+            # Part 2: 简历表达力诊断（写作质量，可通过改写提升）
+            # ====================================
+            'resumeExpression': expression_result,  # 新增：6维度表达力诊断
+            'resumeHealthScore': expression_result['overallScore'],  # 兼容旧字段，现在用表达力综合分
+
+            # ====================================
+            # Part 3: 岗位竞争力对比（多岗位）
+            # ====================================
+            'jobComparisons': job_comparisons,       # 新增：多岗位对比结果
+            'recommendedJob': recommended_job,       # 新增：推荐岗位
+
+            # === 市场薪酬参考（主岗位，向后兼容） ===
+            'salaryRange': salary_range,
             'marketSalary': {
                 'range': salary_range,
                 'note': '月度基本工资（不含年终奖金及其他福利）',
@@ -1040,7 +1092,7 @@ def assess():
                 'industry': industry,
                 'function': job_function,
             },
-            'salaryCompetitiveness': salary_competitiveness,  # 向后兼容
+            'salaryCompetitiveness': salary_competitiveness,
 
             # 学生版附加信息
             'schoolTier': school_tier,
@@ -1048,11 +1100,11 @@ def assess():
             # 解析后的简历文本（供聊天 Agent 使用）
             'resumeText': resume_text,
 
-            # 调试信息（可选，生产环境可移除）
+            # 调试信息
             'factors': factors,
             'logId': log_id,
 
-            # Sparky 开场白（评估阶段预生成，报告页直接显示）
+            # Sparky 开场白
             'greeting': _greeting,
         }
 
@@ -1176,13 +1228,34 @@ def _fallback_assessment(job_title, city, industry, job_function, school_name=''
         'success': True,
         'data': {
             'level': job_grade,
-            'levelTag': "萌新探路者",
-            'levelDesc': "刚踏出校门第一步，世界很大，你的好奇心更大。起点不决定终点，你的故事才刚刚开始写呢。",
+            'abilityScore': 42,
+            'levelTag': "起步探索者",
+            'levelDesc': "你正处于职业探索的起步阶段，经历积累还在早期。建议通过实习、项目等方式快速丰富实战经验。",
             'abilities': default_abilities,
             'radarData': {name: info["score"] for name, info in default_abilities.items()},
             'abilitySummary': "建议持续提升专业能力，拓展校招竞争力。",
             'abilityCompetitiveness': 30,
-            'resumeHealthScore': 40,
+            'resumeExpression': {
+                'overallScore': 30,
+                'dimensions': {
+                    "量化程度": {"score": 25, "level": "low", "tip": "信息不足，无法详细评估。"},
+                    "STAR规范度": {"score": 25, "level": "low", "tip": "信息不足，无法详细评估。"},
+                    "信息完整度": {"score": 25, "level": "low", "tip": "简历信息较为单薄，建议补充完整内容。"},
+                    "表达力度": {"score": 30, "level": "low", "tip": "信息不足，无法详细评估。"},
+                    "关键词覆盖": {"score": 25, "level": "low", "tip": "信息不足，无法详细评估。"},
+                    "结构规范度": {"score": 30, "level": "low", "tip": "信息不足，无法详细评估。"},
+                },
+            },
+            'resumeHealthScore': 30,
+            'jobComparisons': [{
+                'jobFunction': job_function,
+                'salaryRange': salary_range,
+                'matchScore': 50,
+                'competitiveness': 30,
+                'strengths': [],
+                'gaps': [],
+            }],
+            'recommendedJob': None,
             'salaryRange': salary_range,
             'marketSalary': {
                 'range': salary_range,

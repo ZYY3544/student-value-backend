@@ -1,9 +1,17 @@
 """
 ===========================================
-学生版趣味标签映射规则
+学生版职级标签映射规则（专业版）
 ===========================================
-覆盖 9-15 级，每级拆 3 个子档（-/N/+），共21条标签。
-子档依据 HAY 总分在该级分数区间内的位置判定。
+覆盖 9-15 级，使用专业职场段位 + 分数制呈现。
+
+段位体系（5个段位）：
+- 90+   战略引领者
+- 80-89 业务驱动者
+- 70-79 独立执行者
+- 60-69 成长潜力者
+- <60   起步探索者
+
+能力评分：基于 HAY 总分映射到 0-100 分制
 """
 
 from typing import Dict, Tuple
@@ -20,65 +28,64 @@ GRADE_SCORE_RANGES = {
     15: (314, 370),
 }
 
-# (grade, sub_tier) → (tag, description)
-# sub_tier: "-" = 低档, "N" = 中档, "+" = 高档
-STUDENT_LEVEL_TAGS = {
-    (9,  "-"): ("萌新探路者",    "刚踏出校门第一步，世界很大，你的好奇心更大。起点不决定终点，你的故事才刚刚开始写呢。"),
-    (9,  "N"): ("校园新秀",      "在同届里已经有了自己的节奏，虽然经验值还在攒，但方向感已经有了。稳住，慢慢来。"),
-    (9,  "+"): ("潜力萌芽",      "别看现在低调，你的底子比你想象的扎实。再多实习一两段，简历直接起飞。"),
-
-    (10, "-"): ("入门小能手",    "基本功已经有了，接下来就是找到属于你的主线任务。校招战场上，你不算新手了。"),
-    (10, "N"): ("初露锋芒",      "同届里你已经跑在前面了，面试官看你的简历会多停留几秒。保持这个势头，offer会来找你。"),
-    (10, "+"): ("实力储备中",    "能力值悄悄在涨，只差一个展示舞台。秋招春招你都有戏，稳稳拿捏。"),
-
-    (11, "-"): ("行业见习生",    "已经摸到行业门道了，比大多数同学多了一份实战嗅觉。多卷一点项目经验，竞争力翻倍不是梦。"),
-    (11, "N"): ("赛道领跑者",    "你的综合素质在同届中已经挺突出了，面试的时候自信点，你值得更好的offer。"),
-    (11, "+"): ("Offer收割预备",  "简历亮点够多，表达也有章法。再打磨下面试细节，收割offer的日子不远了。"),
-
-    (12, "-"): ("校招硬通货",    "你的简历在HR手里属于优先处理那一档，技术面+综合面都能打。稳住，好offer在路上。"),
-    (12, "N"): ("准MVP",          "放在校招赛场上你就是种子选手，专业深度+视野广度都在线。冲刺大厂SP，完全有戏。"),
-    (12, "+"): ("校园卷王",      "别人还在准备的时候你已经领先一个身位了。这波属于降维打击，面试官都得正襟危坐。"),
-
-    (13, "-"): ("天选打工人",    "校招top梯队稳稳的，企业抢着给你发offer。你唯一的烦恼是：选哪个。"),
-    (13, "N"): ("校招天花板",    "你就是传说中'别人家的应届生'。大厂SSP已经在向你招手了，剩下的交给缘分。"),
-    (13, "+"): ("应届传说",      "简直是校招版六边形战士，哪个维度都能打。HR看到你的简历，估计要抢着约面。"),
-
-    (14, "-"): ("学术新锐",      "研究功底扎实，专业深度已经超越大多数同龄人。企业看你的简历，看到的是潜力股中的硬核选手。"),
-    (14, "N"): ("科研潜力股",    "论文、项目、实战三线并行，你的知识密度让面试官眼前一亮。大厂研究岗的候选名单上，有你的名字。"),
-    (14, "+"): ("硬核研究员",    "专业能力已经逼近资深从业者水平，校招圈里属于降维打击。你不是在找工作，是工作在找你。"),
-
-    (15, "-"): ("顶尖学者胚子",  "博士级别的专业积累加上清晰的产业视野，你在校招市场上是稀缺资源，企业愿意为你开special offer。"),
-    (15, "N"): ("产学研全能王",  "学术深度和工程能力双双在线，放眼整个校招池子都是凤毛麟角。你的竞争力，配得上最好的平台。"),
-    (15, "+"): ("未来科学家",    "还没毕业就已经站在了行业前沿，你的能力边界已经超出校招的评估范围。未来可期，不，未来已来。"),
+# 职级 → 能力评分区间（0-100 分制）
+# 9级对应 30-44, 10级对应 45-54, ..., 15级对应 90-100
+GRADE_TO_SCORE_RANGE = {
+    9:  (30, 44),
+    10: (45, 54),
+    11: (55, 64),
+    12: (65, 74),
+    13: (75, 84),
+    14: (85, 92),
+    15: (93, 100),
 }
 
+# 段位定义：(分数下限, 段位名称, 段位描述)
+PROFESSIONAL_TIERS = [
+    (90, "战略引领者", "你的经历深度和广度已经展现出战略级视野，具备引领业务方向的潜力。在校招市场中属于顶尖稀缺人才，值得最好的平台。"),
+    (75, "业务驱动者", "你具备独立驱动业务的综合实力，经历丰富且有深度。在校招竞争中处于领先梯队，大厂核心岗位是你的舞台。"),
+    (60, "独立执行者", "你已经能够独立承担有一定复杂度的工作，具备扎实的专业基础和实战经验。在校招中具有明确的竞争力。"),
+    (45, "成长潜力者", "你已经积累了一定的实践经验，具备持续成长的基础。通过针对性地补强经历短板，竞争力还有很大提升空间。"),
+    (0,  "起步探索者", "你正处于职业探索的起步阶段，经历积累还在早期。建议通过实习、项目等方式快速丰富实战经验。"),
+]
 
-def _determine_sub_tier(job_grade: int, total_score: int) -> str:
+
+def _hay_total_to_ability_score(job_grade: int, total_score: int) -> int:
     """
-    根据 HAY 总分在该级区间内的位置判定子档
+    将 HAY 总分映射到 0-100 的能力评分
 
-    将分数区间三等分:
-    - 下 1/3 → "-"
-    - 中 1/3 → "N"
-    - 上 1/3 → "+"
+    映射逻辑：
+    1. 根据 job_grade 确定该级的评分区间
+    2. 根据 total_score 在该级 HAY 总分区间中的位置，线性插值到评分区间
     """
-    if job_grade not in GRADE_SCORE_RANGES:
-        return "N"
+    if job_grade < 9:
+        job_grade = 9
+    elif job_grade > 15:
+        job_grade = 15
 
-    low, high = GRADE_SCORE_RANGES[job_grade]
-    span = high - low
-    if span <= 0:
-        return "N"
+    # 获取 HAY 总分区间
+    hay_low, hay_high = GRADE_SCORE_RANGES.get(job_grade, (161, 191))
+    # 获取评分区间
+    score_low, score_high = GRADE_TO_SCORE_RANGE.get(job_grade, (55, 64))
 
-    relative = total_score - low
-    third = span / 3
+    # 线性插值
+    hay_span = hay_high - hay_low
+    if hay_span <= 0:
+        return score_low
 
-    if relative < third:
-        return "-"
-    elif relative < third * 2:
-        return "N"
-    else:
-        return "+"
+    ratio = (total_score - hay_low) / hay_span
+    ratio = max(0.0, min(1.0, ratio))  # 限制在 [0, 1]
+
+    ability_score = int(score_low + ratio * (score_high - score_low))
+    return max(0, min(100, ability_score))
+
+
+def _get_professional_tier(ability_score: int) -> Tuple[str, str]:
+    """根据能力评分返回 (段位名称, 段位描述)"""
+    for threshold, name, desc in PROFESSIONAL_TIERS:
+        if ability_score >= threshold:
+            return name, desc
+    return PROFESSIONAL_TIERS[-1][1], PROFESSIONAL_TIERS[-1][2]
 
 
 def get_student_level_tag_and_desc(
@@ -86,30 +93,36 @@ def get_student_level_tag_and_desc(
     total_score: int = 0
 ) -> Tuple[str, str]:
     """
-    学生版标签生成函数
+    学生版标签生成函数（专业版）
 
     Args:
         job_grade: 职级 (9-15)
-        total_score: HAY 总分，用于判定子档
+        total_score: HAY 总分，用于精确计算能力评分
 
     Returns:
-        (tag, description)
+        (tier_name, tier_description) 段位名称和描述
     """
-    # 下限兜底到 9
     if job_grade < 9:
         job_grade = 9
-    # 上限兜底到 15
     elif job_grade > 15:
         job_grade = 15
 
-    sub_tier = _determine_sub_tier(job_grade, total_score)
-    key = (job_grade, sub_tier)
+    ability_score = _hay_total_to_ability_score(job_grade, total_score)
+    return _get_professional_tier(ability_score)
 
-    if key in STUDENT_LEVEL_TAGS:
-        return STUDENT_LEVEL_TAGS[key]
 
-    # 兜底：使用中档
-    return STUDENT_LEVEL_TAGS.get((job_grade, "N"), ("校园新秀", "你的校招之旅正在展开，加油！"))
+def get_ability_score(job_grade: int, total_score: int = 0) -> int:
+    """
+    获取能力评分（0-100）
+
+    Args:
+        job_grade: 职级 (9-15)
+        total_score: HAY 总分
+
+    Returns:
+        0-100 的能力评分
+    """
+    return _hay_total_to_ability_score(job_grade, total_score)
 
 
 # 保留原版函数签名的兼容包装
@@ -127,19 +140,13 @@ def get_level_tag_and_desc(
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("学生版职级标签测试")
+    print("学生版职级标签测试（专业版）")
     print("=" * 60)
 
     for grade in range(9, 16):
         low, high = GRADE_SCORE_RANGES[grade]
-        for sub, label in [("-", "低档"), ("N", "中档"), ("+", "高档")]:
-            # 模拟不同分数
-            if sub == "-":
-                score = low + 2
-            elif sub == "N":
-                score = (low + high) // 2
-            else:
-                score = high - 2
-            tag, desc = get_student_level_tag_and_desc(grade, score)
-            print(f"\n【{grade}级 {label}】{tag} (score={score})")
-            print(f"  {desc}")
+        for sub, label in [("低档", low + 2), ("中档", (low + high) // 2), ("高档", high - 2)]:
+            ability_score = _hay_total_to_ability_score(grade, label)
+            tier_name, tier_desc = _get_professional_tier(ability_score)
+            print(f"\n【{grade}级 {sub}】能力评分: {ability_score} | 段位: {tier_name}")
+            print(f"  {tier_desc[:50]}...")
