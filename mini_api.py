@@ -1288,6 +1288,49 @@ def update_duration():
     return jsonify({'success': True}), 200
 
 
+@app.route('/api/mini/salary-query', methods=['POST'])
+def salary_query():
+    """轻量级薪酬查询：根据城市/行业重新计算各职能的薪酬区间"""
+    data = request.get_json() or {}
+    job_grade = data.get('grade')
+    functions = data.get('functions', [])
+    raw_city = data.get('city', '上海')
+    industry = data.get('industry', '互联网')
+    school_tier = data.get('schoolTier', '普通本科')
+    education_level = data.get('educationLevel', '本科')
+
+    if not job_grade or not functions:
+        return jsonify({'success': False, 'error': '缺少参数'}), 400
+
+    CITY_TIER_MAP = {
+        "北京": "一线城市", "上海": "一线城市", "深圳": "一线城市", "广州": "一线城市",
+        "杭州": "二线城市", "南京": "二线城市", "成都": "二线城市", "武汉": "二线城市",
+        "苏州": "二线城市", "西安": "二线城市",
+        "其他": "三线城市",
+    }
+    city = CITY_TIER_MAP.get(raw_city, '二线城市')
+
+    results = {}
+    for func in functions[:3]:
+        try:
+            salary_result = salary_calculator.get_salary_range(
+                job_grade=int(job_grade), function=func, industry=industry, city=city
+            )
+            if salary_result:
+                adj_low, adj_high = apply_student_coefficients(
+                    salary_result['P50_low'], salary_result['P50_high'],
+                    school_tier, education_level
+                )
+                results[func] = format_salary_k(adj_low, adj_high)
+            else:
+                results[func] = '暂无数据'
+        except Exception as e:
+            print(f"[salary-query] {func} 查询失败: {e}")
+            results[func] = '暂无数据'
+
+    return jsonify({'success': True, 'data': results})
+
+
 # ===========================================
 # 简历优化 Agent API
 # ===========================================
