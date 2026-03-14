@@ -624,13 +624,14 @@ EDIT>>>
         """
         return ""
 
-    def _execute_tool_calls(self, tool_calls, messages: list) -> list:
+    def _execute_tool_calls(self, tool_calls, messages: list, streamed_text: str = "") -> list:
         """
         执行工具调用并将结果追加到消息列表
 
         Args:
             tool_calls: LLM 返回的 tool_calls 列表
             messages: 当前消息列表（会被修改）
+            streamed_text: 流式阶段已输出的文本（Anthropic 模型可能在 tool_use 前输出文本）
 
         Returns:
             更新后的消息列表
@@ -639,9 +640,10 @@ EDIT>>>
             return messages
 
         # 先追加 assistant 的 tool_calls 消息
+        # content 使用空字符串而非 None，兼容 Anthropic API
         assistant_msg = {
             "role": "assistant",
-            "content": None,
+            "content": streamed_text or "",
             "tool_calls": [
                 {
                     "id": tc.id,
@@ -729,6 +731,7 @@ EDIT>>>
 
                     tool_calls_map = {}  # index -> {id, function: {name, arguments}}
                     has_content = False
+                    streamed_text_parts = []  # 收集流式输出的文本（用于回填上下文）
                     finish_reason = None
 
                     for chunk in stream:
@@ -740,6 +743,7 @@ EDIT>>>
                         # 流式输出文本内容（不触发工具时）
                         if delta.content:
                             has_content = True
+                            streamed_text_parts.append(delta.content)
                             yield delta.content
 
                         # 收集 tool_calls（触发工具时，content 为空）
@@ -781,7 +785,9 @@ EDIT>>>
                                 yield ch
                         for tc in tc_objects:
                             shown_tools.add(tc.function.name)
-                        messages = self._execute_tool_calls(tc_objects, messages)
+                        # 传递流式阶段已输出的文本，确保上下文完整
+                        streamed_text = "".join(streamed_text_parts)
+                        messages = self._execute_tool_calls(tc_objects, messages, streamed_text=streamed_text)
                         continue
                     else:
                         # 纯文本回复已在上面 yield 完毕，直接返回
@@ -842,7 +848,11 @@ EDIT>>>
 
                 if has_tools and choice.finish_reason == "tool_calls" and choice.message.tool_calls:
                     print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用（sync）")
-                    messages = self._execute_tool_calls(choice.message.tool_calls, messages)
+                    # 传递 assistant 已输出的文本内容，保持上下文完整
+                    messages = self._execute_tool_calls(
+                        choice.message.tool_calls, messages,
+                        streamed_text=(choice.message.content or "")
+                    )
                     continue
                 else:
                     return (choice.message.content or "").strip()

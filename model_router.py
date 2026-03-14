@@ -237,14 +237,24 @@ class BedrockChatCompletions:
 
             elif role == "tool":
                 tool_content = content if isinstance(content, str) else json.dumps(content)
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id,
-                        "content": tool_content
-                    }]
-                })
+                tool_result_block = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": tool_content
+                }
+                # 合并连续的 tool_result 到同一个 user 消息中
+                # Anthropic API 不允许连续的同 role 消息
+                if (anthropic_messages
+                        and anthropic_messages[-1]["role"] == "user"
+                        and isinstance(anthropic_messages[-1]["content"], list)
+                        and anthropic_messages[-1]["content"]
+                        and anthropic_messages[-1]["content"][0].get("type") == "tool_result"):
+                    anthropic_messages[-1]["content"].append(tool_result_block)
+                else:
+                    anthropic_messages.append({
+                        "role": "user",
+                        "content": [tool_result_block]
+                    })
 
             else:  # user
                 anthropic_messages.append({"role": "user", "content": content or ""})
@@ -271,6 +281,11 @@ class BedrockChatCompletions:
         """OpenAI 兼容的 create 方法"""
         model = model or self._default_model
         system_text, anthropic_messages = self._convert_messages(messages or [])
+
+        # Anthropic 不支持 response_format，通过在 system prompt 中注入约束来模拟
+        if response_format and response_format.get("type") == "json_object":
+            json_constraint = "\n\n[CRITICAL] You MUST respond with valid JSON only. No markdown, no explanation, no extra text — just a single JSON object."
+            system_text = (system_text or "") + json_constraint
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
