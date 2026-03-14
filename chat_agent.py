@@ -33,6 +33,7 @@ import json
 import time
 import os
 import threading
+import boto3
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
 from openai import OpenAI
@@ -663,6 +664,23 @@ class ChatAgent:
         self.report_agent = ReportAgent(client, model)               # 总结报告 → GLM-4-Plus
         self._model_flash = _model_flash  # 供简历拆分使用
 
+        # Bedrock 客户端（可选，用于报告解读调用 Claude Sonnet）
+        self.bedrock_client = None
+        self.bedrock_model = os.getenv('AWS_BEDROCK_MODEL', 'us.anthropic.claude-sonnet-4-6-20250220-v1:0')
+        try:
+            ak = os.getenv('AWS_BEDROCK_ACCESS_KEY')
+            sk = os.getenv('AWS_BEDROCK_SECRET_KEY')
+            if ak and sk:
+                self.bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_BEDROCK_REGION', 'us-east-1'),
+                    aws_access_key_id=ak,
+                    aws_secret_access_key=sk,
+                )
+                print("[Orchestrator] Bedrock 客户端初始化成功，报告解读将使用 Claude Sonnet")
+        except Exception as e:
+            print(f"[Orchestrator] Bedrock 初始化失败，报告解读将回退到 GLM: {e}")
+
         print("[Orchestrator] 多 Agent 系统初始化完成（多模型梯队）")
         print(f"  - DiagnosisAgent: 开场诊断 → {_model_plus}（温度 {DiagnosisAgent.TEMPERATURE}）")
         print(f"  - PlanningAgent:  优化规划 → {_model_plus}（温度 {PlanningAgent.TEMPERATURE}）")
@@ -1178,25 +1196,45 @@ class ChatAgent:
 - 输出到「可以加强的方向」结束，不要输出引导问题（引导问题由系统自动追加）"""
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
-        """V2: 报告解读流式输出，引导问题由代码追加"""
+        """V2: 报告解读流式输出（Bedrock Claude Sonnet → GLM fallback），引导问题由代码追加"""
         system_prompt = self._build_report_analysis_prompt(session)
 
-        active_client = getattr(self, 'report_client', self.diagnosis_agent.client)
-        active_model = getattr(self, 'report_model', self.diagnosis_agent.model)
-
         try:
-            response = active_client.chat.completions.create(
-                model=active_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                ],
-                temperature=0.5,
-                stream=True,
-            )
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+            if self.bedrock_client:
+                # ===== Bedrock Claude Sonnet =====
+                print(f"[Orchestrator] 报告解读使用 Bedrock: {self.bedrock_model}")
+                response = self.bedrock_client.invoke_model_with_response_stream(
+                    modelId=self.bedrock_model,
+                    contentType='application/json',
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 1024,
+                        "temperature": 0.5,
+                        "system": system_prompt,
+                        "messages": [
+                            {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                        ]
+                    })
+                )
+                for event in response['body']:
+                    chunk = json.loads(event['chunk']['bytes'])
+                    if chunk['type'] == 'content_block_delta':
+                        yield chunk['delta'].get('text', '')
+            else:
+                # ===== GLM fallback =====
+                print(f"[Orchestrator] 报告解读回退到 GLM: {self.diagnosis_agent.model}")
+                response = self.diagnosis_agent.client.chat.completions.create(
+                    model=self.diagnosis_agent.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                    ],
+                    temperature=0.5,
+                    stream=True,
+                )
+                for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
 
             # 程序化追加引导问题
             ctx = session["assessment_context"]
