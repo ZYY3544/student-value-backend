@@ -1248,8 +1248,9 @@ class ChatAgent:
                         chunk = json.loads(event['chunk']['bytes'])
                         if chunk.get('type') == 'content_block_delta':
                             yield chunk.get('delta', {}).get('text', '')
+                    print(f"[Bedrock] Sonnet 调用成功")
                 except Exception as sonnet_err:
-                    print(f"[Orchestrator] Sonnet 调用失败 ({type(sonnet_err).__name__}: {sonnet_err})，自动回退")
+                    print(f"[Bedrock] Sonnet 失败，已回退 GLM ({type(sonnet_err).__name__}: {sonnet_err})")
                     yield from self._call_fallback_stream(system_prompt)
             else:
                 # 无 Bedrock 客户端，用当前主力模型
