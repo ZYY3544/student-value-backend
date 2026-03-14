@@ -2,7 +2,7 @@
 ===========================================
 LLM 服务模块
 ===========================================
-支持 AWS Bedrock Sonnet / GLM 等多种后端
+支持 OpenRouter / GLM / DeepSeek 等多种后端
 通过 ModelRouter 自动选择模型
 """
 
@@ -17,7 +17,7 @@ class LLMService:
     """
     LLM 服务类
 
-    初始化时传入已创建的 client（如 GLMCompatibleClient / BedrockOpenAIClient）
+    初始化时传入已创建的 client（如 GLMCompatibleClient / OpenAI）
     """
 
     def __init__(self, client, model: str = "glm-4.5"):
@@ -25,7 +25,7 @@ class LLMService:
         初始化 LLM 服务
 
         Args:
-            client: 外部客户端（如 GLMCompatibleClient / BedrockOpenAIClient）
+            client: 外部客户端（如 GLMCompatibleClient / OpenAI）
             model: 模型名称
         """
         self.model = model

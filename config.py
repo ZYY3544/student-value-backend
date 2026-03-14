@@ -132,33 +132,28 @@ class Config:
         return os.getenv('API_DEBUG', 'false').lower() in ('true', '1', 'yes')
 
     # ===========================================
-    # AWS Bedrock (Sonnet) 配置
+    # OpenRouter (Claude) 配置
     # ===========================================
 
     @property
-    def AWS_ACCESS_KEY_ID(self) -> Optional[str]:
-        """AWS Access Key ID（兼容 AWS_BEDROCK_ACCESS_KEY）"""
-        return os.getenv('AWS_ACCESS_KEY_ID') or os.getenv('AWS_BEDROCK_ACCESS_KEY')
+    def OPENROUTER_API_KEY(self) -> Optional[str]:
+        """OpenRouter API Key"""
+        return os.getenv('OPENROUTER_API_KEY')
 
     @property
-    def AWS_SECRET_ACCESS_KEY(self) -> Optional[str]:
-        """AWS Secret Access Key（兼容 AWS_BEDROCK_SECRET_KEY）"""
-        return os.getenv('AWS_SECRET_ACCESS_KEY') or os.getenv('AWS_BEDROCK_SECRET_KEY')
-
-    @property
-    def AWS_REGION(self) -> str:
-        """AWS Region（兼容 AWS_BEDROCK_REGION）"""
-        return os.getenv('AWS_REGION') or os.getenv('AWS_BEDROCK_REGION', 'us-east-1')
+    def OPENROUTER_BASE_URL(self) -> str:
+        """OpenRouter API Base URL"""
+        return os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
 
     @property
     def SONNET_MODEL_ID(self) -> str:
-        """AWS Bedrock Sonnet 模型 ID"""
-        return os.getenv('SONNET_MODEL_ID', 'anthropic.claude-sonnet-4-6')
+        """Sonnet 模型 ID（OpenRouter）"""
+        return os.getenv('SONNET_MODEL_ID', 'anthropic/claude-sonnet-4.6')
 
     @property
     def HAIKU_MODEL_ID(self) -> str:
-        """AWS Bedrock Haiku 模型 ID"""
-        return os.getenv('HAIKU_MODEL_ID', 'global.anthropic.claude-haiku-4-5-20251001-v1:0')
+        """Haiku 模型 ID（OpenRouter）"""
+        return os.getenv('HAIKU_MODEL_ID', 'anthropic/claude-haiku-4.5')
 
     # ===========================================
     # GLM (智谱) 配置 - 降级备用模型
@@ -254,16 +249,16 @@ class Config:
         warnings = []
 
         # 检查 LLM 配置（至少需要一个可用的模型）
-        has_sonnet = self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY
+        has_openrouter = bool(self.OPENROUTER_API_KEY)
         has_glm = bool(self.GLM_API_KEY)
 
-        if not has_sonnet and not has_glm:
-            errors.append("至少需要配置一个 LLM 提供商（AWS Sonnet / GLM）")
+        if not has_openrouter and not has_glm:
+            errors.append("至少需要配置一个 LLM 提供商（OpenRouter / GLM）")
 
-        if not has_sonnet:
-            warnings.append("AWS Bedrock 未配置，Sonnet 模型不可用")
+        if not has_openrouter:
+            warnings.append("OpenRouter 未配置，Claude 模型不可用")
         if not has_glm:
-            warnings.append("GLM 未配置，主力模型不可用")
+            warnings.append("GLM 未配置，备用模型不可用")
 
         # 检查验证规则文件（警告，不影响基本功能）
         validation_files = [
@@ -290,12 +285,11 @@ class Config:
         print("当前配置信息")
         print("=" * 60)
         print(f"项目根目录: {self.BASE_DIR}")
-        print(f"AWS Bedrock: {'已配置' if self.AWS_ACCESS_KEY_ID else '未配置'} (Region: {self.AWS_REGION})")
+        print(f"OpenRouter: {'已配置' if self.OPENROUTER_API_KEY else '未配置'}")
         print(f"Haiku 模型: {self.HAIKU_MODEL_ID}")
         print(f"Sonnet 模型: {self.SONNET_MODEL_ID}")
         print(f"GLM API Key: {'已配置（备用）' if self.GLM_API_KEY else '未配置'}")
         print(f"GLM 模型: {self.GLM_MODEL}")
-        print(f"用户 Sonnet 预算: ¥{self.SONNET_BUDGET_PER_USER}/人")
         print(f"薪酬数据文件: {self.SALARY_CSV_PATH}")
         print(f"  - 文件存在: {os.path.exists(self.SALARY_CSV_PATH)}")
         print(f"API服务地址: {self.API_HOST}:{self.API_PORT}")

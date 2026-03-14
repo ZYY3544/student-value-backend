@@ -535,20 +535,11 @@ llm_service_pk = None
 if model_router:
     try:
         _primary_client, _primary_model, _primary_provider = model_router.get_client_for_user(None)
-        # LLM 服务仍然需要 OpenAI 兼容客户端（用于 DeepSeek/GLM 路径）
-        # 如果主力是 Bedrock，llm_service 使用 GLM 或 DeepSeek
-        if _primary_provider in ("haiku", "sonnet") and model_router.glm_client:
-            llm_service = LLMService(
-                client=model_router.glm_client,
-                model=model_router.glm_model
-            )
-            print(f"✓ LLM服务初始化成功（GLM 模型: {model_router.glm_model}，评估引擎用）")
-        elif _primary_provider == "glm":
-            llm_service = LLMService(
-                client=_primary_client,
-                model=_primary_model
-            )
-            print(f"✓ LLM服务初始化成功（{_primary_provider} 模型: {_primary_model}）")
+        llm_service = LLMService(
+            client=_primary_client,
+            model=_primary_model
+        )
+        print(f"✓ LLM服务初始化成功（{_primary_provider} 模型: {_primary_model}）")
         llm_service_pk = llm_service
     except Exception as e:
         print(f"✗ LLM服务初始化失败: {e}")
@@ -570,7 +561,7 @@ if config.DEEPSEEK_API_KEY:
         print(f"⚠ DeepSeek 初始化失败，PK判断继续使用 GLM: {e}")
 
 if llm_service is None:
-    print("✗ LLM服务初始化失败: 无可用模型，请配置 AWS Bedrock 或 GLM_API_KEY")
+    print("✗ LLM服务初始化失败: 无可用模型，请配置 OPENROUTER_API_KEY 或 GLM_API_KEY")
     exit(1)
 
 # 简历拆分缓存（评估阶段后台启动，chat/start 时取用）
@@ -582,7 +573,6 @@ try:
     chat_agent = ChatAgent(
         client=_primary_client,
         model=_primary_model,
-        provider=_primary_provider,
         llm_service=llm_service,
         convergence_engine=None,
         model_router=model_router,
@@ -932,7 +922,7 @@ def assess():
                 }
                 from multi_agent import DiagnosisAgent
                 _primary_c, _primary_m, _primary_p = model_router.get_client_for_user(None)
-                _greeting_agent = DiagnosisAgent(_primary_c, _primary_m, _primary_p)
+                _greeting_agent = DiagnosisAgent(_primary_c, _primary_m)
                 _greeting = _greeting_agent.diagnose(_greeting_ctx, resume_text)
                 print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字，模型: {_primary_m}，provider: {_primary_p}）")
             except Exception as e:
@@ -946,7 +936,7 @@ def assess():
             try:
                 _split_c, _split_m, _split_p = model_router.get_client_for_user(None)
                 _split_result[0] = split_resume_sections(
-                    _split_c, _split_m, resume_text, _split_p
+                    _split_c, _split_m, resume_text
                 )
                 print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落（模型: {_split_m}）")
             except Exception as e:

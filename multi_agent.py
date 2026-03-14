@@ -17,7 +17,6 @@
 import json
 from typing import Optional, Generator, List, Dict
 from utils import safe_json_parse
-from bedrock_native import unified_invoke, unified_stream, unified_stream_text
 
 
 # ===========================================
@@ -172,10 +171,9 @@ class DiagnosisAgent:
 
     TEMPERATURE = 0.3
 
-    def __init__(self, client, model: str, provider: str = "haiku"):
+    def __init__(self, client, model: str):
         self.client = client
         self.model = model
-        self.provider = provider
 
     def diagnose(self, assessment_context: dict, resume_text: str) -> str:
         """
@@ -196,8 +194,8 @@ class DiagnosisAgent:
             try:
                 import time as _t
                 _start = _t.time()
-                response = unified_invoke(
-                    self.client, self.model, self.provider,
+                response = self.client.chat.completions.create(
+                    model=self.model,
                     messages=[
                         {"role": "system", "content": self.SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}
@@ -205,7 +203,7 @@ class DiagnosisAgent:
                     temperature=self.TEMPERATURE,
                 )
                 _elapsed = _t.time() - _start
-                result_text = response["content"].strip()
+                result_text = response.choices[0].message.content.strip()
                 print(f"[DiagnosisAgent] LLM响应: {_elapsed:.1f}s, 输出{len(result_text)}字")
                 return result_text
             except Exception as e:
@@ -372,10 +370,9 @@ class PlanningAgent:
 
     TEMPERATURE = 0.3
 
-    def __init__(self, client, model: str, provider: str = "haiku"):
+    def __init__(self, client, model: str):
         self.client = client
         self.model = model
-        self.provider = provider
 
     def generate_plan(self, assessment_context: dict, resume_text: str) -> Optional[dict]:
         """
@@ -393,8 +390,8 @@ class PlanningAgent:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = unified_invoke(
-                    self.client, self.model, self.provider,
+                response = self.client.chat.completions.create(
+                    model=self.model,
                     messages=[
                         {"role": "system", "content": self.SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}
@@ -402,7 +399,7 @@ class PlanningAgent:
                     temperature=self.TEMPERATURE,
                     response_format={"type": "json_object"},
                 )
-                content = response["content"].strip()
+                content = response.choices[0].message.content.strip()
                 plan = safe_json_parse(content)
                 print(f"[PlanningAgent] 优化计划生成成功，共 {len(plan.get('plan_items', []))} 条建议")
                 return plan
@@ -615,10 +612,9 @@ EDIT>>>
     # 支持多步链路：如 search→fetch_url→save_version
     MAX_TOOL_ROUNDS = 5
 
-    def __init__(self, client, model: str, provider: str = "haiku", tool_executor=None):
+    def __init__(self, client, model: str, tool_executor=None):
         self.client = client
         self.model = model
-        self.provider = provider
         self.tool_executor = tool_executor
 
     def _get_tool_status_message(self, tool_calls, shown_tools: set = None) -> str:
@@ -720,39 +716,48 @@ EDIT>>>
 
                 for round_idx in range(self.MAX_TOOL_ROUNDS):
                     # 单次流式调用（带工具），同时处理 content 和 tool_calls
-                    tool_calls_map = {}  # index -> {id, name, arguments}
+                    stream = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=self.TEMPERATURE,
+                        tools=tools_param,
+                        stream=True,
+                    )
+
+                    tool_calls_map = {}
                     has_content = False
                     streamed_text_parts = []
                     finish_reason = None
 
-                    for event in unified_stream(
-                        self.client, self.model, self.provider,
-                        messages=messages,
-                        temperature=self.TEMPERATURE,
-                        tools=tools_param,
-                    ):
-                        if event["type"] == "text":
+                    for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        finish_reason = chunk.choices[0].finish_reason or finish_reason
+
+                        if delta.content:
                             has_content = True
-                            streamed_text_parts.append(event["text"])
-                            yield event["text"]
+                            streamed_text_parts.append(delta.content)
+                            yield delta.content
 
-                        elif event["type"] == "tool_start":
-                            idx = event["index"]
-                            tool_calls_map[idx] = {
-                                "id": event["id"],
-                                "function": {"name": event["name"], "arguments": ""},
-                            }
-
-                        elif event["type"] == "tool_delta":
-                            idx = event["index"]
-                            if idx in tool_calls_map:
-                                tool_calls_map[idx]["function"]["arguments"] += event["partial_json"]
-
-                        elif event["type"] == "done":
-                            finish_reason = event["finish_reason"]
+                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_map:
+                                    tool_calls_map[idx] = {
+                                        "id": "",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                if tc_delta.id:
+                                    tool_calls_map[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        tool_calls_map[idx]["function"]["name"] += tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        tool_calls_map[idx]["function"]["arguments"] += tc_delta.function.arguments
 
                     # 流结束后判断走向
-                    if tool_calls_map and finish_reason == "tool_use":
+                    if tool_calls_map and finish_reason == "tool_calls":
                         print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用（流式检测）")
 
                         # 构造兼容对象
@@ -785,12 +790,15 @@ EDIT>>>
                 print(f"[OptimizeAgent] 超过最大工具轮次，最终流式输出")
 
             # 无工具场景 / 工具轮次耗尽后的兜底：纯流式输出
-            for text in unified_stream_text(
-                self.client, self.model, self.provider,
+            stream = self.client.chat.completions.create(
+                model=self.model,
                 messages=messages,
                 temperature=self.TEMPERATURE,
-            ):
-                yield text
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
 
         except Exception as e:
             print(f"[OptimizeAgent] 优化生成失败: {e}")
@@ -820,39 +828,31 @@ EDIT>>>
             tools_param = OPTIMIZE_AGENT_TOOLS if has_tools else None
 
             for round_idx in range(self.MAX_TOOL_ROUNDS):
-                response = unified_invoke(
-                    self.client, self.model, self.provider,
+                response = self.client.chat.completions.create(
+                    model=self.model,
                     messages=messages,
                     temperature=self.TEMPERATURE,
                     tools=tools_param if has_tools else None,
                 )
+                choice = response.choices[0]
 
-                if has_tools and response["finish_reason"] == "tool_use" and response["tool_calls"]:
+                if has_tools and choice.finish_reason == "tool_calls" and choice.message.tool_calls:
                     print(f"[OptimizeAgent] 第 {round_idx + 1} 轮工具调用（sync）")
-                    # 构造兼容对象供 _execute_tool_calls 使用
-                    class _TC:
-                        def __init__(self, tc_dict):
-                            self.id = tc_dict["id"]
-                            self.function = type('F', (), {
-                                'name': tc_dict["name"],
-                                'arguments': tc_dict["arguments"],
-                            })()
-                    tc_objects = [_TC(tc) for tc in response["tool_calls"]]
                     messages = self._execute_tool_calls(
-                        tc_objects, messages,
-                        streamed_text=response["content"]
+                        choice.message.tool_calls, messages,
+                        streamed_text=(choice.message.content or "")
                     )
                     continue
                 else:
-                    return response["content"].strip()
+                    return (choice.message.content or "").strip()
 
             # 超过最大轮次，最后一次不带 tools
-            response = unified_invoke(
-                self.client, self.model, self.provider,
+            response = self.client.chat.completions.create(
+                model=self.model,
                 messages=messages,
                 temperature=self.TEMPERATURE,
             )
-            return response["content"].strip()
+            return (response.choices[0].message.content or "").strip()
 
         except Exception as e:
             print(f"[OptimizeAgent] 优化生成失败: {e}")
@@ -1040,10 +1040,9 @@ class ReportAgent:
 
     TEMPERATURE = 0.3
 
-    def __init__(self, client, model: str, provider: str = "haiku"):
+    def __init__(self, client, model: str):
         self.client = client
         self.model = model
-        self.provider = provider
 
     def generate_report(
         self,
@@ -1065,15 +1064,18 @@ class ReportAgent:
         )
 
         try:
-            for text in unified_stream_text(
-                self.client, self.model, self.provider,
+            stream = self.client.chat.completions.create(
+                model=self.model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=self.TEMPERATURE,
-            ):
-                yield text
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
 
         except Exception as e:
             print(f"[ReportAgent] 报告生成失败: {e}")
@@ -1094,15 +1096,15 @@ class ReportAgent:
         )
 
         try:
-            response = unified_invoke(
-                self.client, self.model, self.provider,
+            response = self.client.chat.completions.create(
+                model=self.model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=self.TEMPERATURE,
             )
-            return response["content"].strip()
+            return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"[ReportAgent] 报告生成失败: {e}")
             return "感谢你的耐心配合！本次优化已完成，建议你根据我们讨论的方向继续完善简历。加油！"

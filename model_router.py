@@ -2,8 +2,8 @@
 ===========================================
 模型路由器 (Model Router)
 ===========================================
-Bedrock 调用统一使用 boto3 原生 SDK（bedrock_native.py）。
-GLM 使用 OpenAI 兼容接口作为备用。
+Claude 模型通过 OpenRouter（OpenAI 兼容接口）调用。
+GLM 作为备用。
 
 包含：
 - UsageTracker: 用量追踪（PostgreSQL）
@@ -160,11 +160,12 @@ class GLMCompatibleClient:
 
 class ModelRouter:
     """
-    模型路由器 — GLM 为主力模型，Bedrock 仅用于报告解读（在 ChatAgent 中独立管理）
+    模型路由器 — OpenRouter (Haiku) 为主力，GLM 备用
 
     策略：
-    1. 优先使用 GLM（glm-4.5）
-    2. Bedrock Sonnet 仅在 ChatAgent._stream_report_analysis 中使用
+    1. 优先使用 OpenRouter Haiku 4.5
+    2. OpenRouter 不可用时回退 GLM
+    3. Sonnet 仅用于报告解读（在 ChatAgent 中独立管理）
     """
 
     def __init__(self, usage_tracker: UsageTracker):
@@ -173,7 +174,20 @@ class ModelRouter:
         self.haiku_model = config.HAIKU_MODEL_ID
         self.sonnet_model = config.SONNET_MODEL_ID
 
-        # GLM 客户端（主力）
+        # OpenRouter 客户端（主力，Haiku 4.5）
+        self.openrouter_client = None
+        if config.OPENROUTER_API_KEY:
+            try:
+                from openai import OpenAI
+                self.openrouter_client = OpenAI(
+                    api_key=config.OPENROUTER_API_KEY,
+                    base_url=config.OPENROUTER_BASE_URL,
+                )
+                print(f"[ModelRouter] OpenRouter 客户端初始化成功 (model={self.haiku_model})")
+            except Exception as e:
+                print(f"[ModelRouter] OpenRouter 客户端初始化失败: {e}")
+
+        # GLM 客户端（备用）
         self.glm_client = None
         self.glm_model = config.GLM_MODEL
         if config.GLM_API_KEY:
@@ -189,10 +203,12 @@ class ModelRouter:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
 
         # 兼容属性
-        self.glm_model_plus = config.GLM_MODEL_PLUS
-        self.glm_model_flash = config.GLM_MODEL_FLASH
+        self.glm_model_plus = self.haiku_model if self.openrouter_client else config.GLM_MODEL_PLUS
+        self.glm_model_flash = self.haiku_model if self.openrouter_client else config.GLM_MODEL_FLASH
 
-        if self.glm_client:
+        if self.openrouter_client:
+            print(f"[ModelRouter] 主力模型: Haiku 4.5 via OpenRouter ({self.haiku_model})")
+        elif self.glm_client:
             print(f"[ModelRouter] 主力模型: GLM ({self.glm_model})")
 
         self.budget = config.SONNET_BUDGET_PER_USER
@@ -200,12 +216,16 @@ class ModelRouter:
     def get_client_for_user(self, user_id: str) -> tuple:
         """
         返回 (client, model, provider)
-        所有 Agent 统一走 GLM，Bedrock 仅用于报告解读。
+        OpenRouter 和 GLM 都是 OpenAI 兼容接口，调用方式完全一致。
         """
+        if self.openrouter_client:
+            return self.openrouter_client, self.haiku_model, "openrouter"
+
         if self.glm_client:
+            print(f"[ModelRouter] OpenRouter 不可用，回退到 GLM")
             return self.glm_client, self.glm_model, "glm"
 
-        raise RuntimeError("无可用的 LLM 模型（GLM 未配置）")
+        raise RuntimeError("无可用的 LLM 模型（OpenRouter 和 GLM 均未配置）")
 
     def record_usage(self, user_id: str, provider: str, model: str,
                      input_tokens: int, output_tokens: int):
