@@ -160,36 +160,20 @@ class GLMCompatibleClient:
 
 class ModelRouter:
     """
-    模型路由器 — Bedrock 使用 boto3 原生客户端，GLM 作为备用
+    模型路由器 — GLM 为主力模型，Bedrock 仅用于报告解读（在 ChatAgent 中独立管理）
 
     策略：
-    1. 优先使用 AWS Bedrock Haiku 4.5（boto3 原生调用）
-    2. Haiku 不可用时回退 GLM（OpenAI 兼容接口）
-
-    get_client_for_user 返回:
-        - Bedrock 路径: (boto3_bedrock_client, model_id, "haiku")
-        - GLM 路径: (glm_openai_client, model_id, "glm")
+    1. 优先使用 GLM（glm-4.5）
+    2. Bedrock Sonnet 仅在 ChatAgent._stream_report_analysis 中使用
     """
 
     def __init__(self, usage_tracker: UsageTracker):
         self.usage_tracker = usage_tracker
 
-        # Bedrock boto3 原生客户端（Haiku + Sonnet 共用）
-        self.bedrock_client = None
         self.haiku_model = config.HAIKU_MODEL_ID
         self.sonnet_model = config.SONNET_MODEL_ID
 
-        if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
-            try:
-                from bedrock_native import create_bedrock_client
-                self.bedrock_client = create_bedrock_client()
-                print(f"[ModelRouter] Bedrock boto3 客户端初始化成功")
-                print(f"  - Haiku: {self.haiku_model}")
-                print(f"  - Sonnet: {self.sonnet_model}")
-            except Exception as e:
-                print(f"[ModelRouter] Bedrock 客户端初始化失败: {e}")
-
-        # GLM 客户端（备用）
+        # GLM 客户端（主力）
         self.glm_client = None
         self.glm_model = config.GLM_MODEL
         if config.GLM_API_KEY:
@@ -205,12 +189,10 @@ class ModelRouter:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
 
         # 兼容属性
-        self.glm_model_plus = self.haiku_model if self.bedrock_client else config.GLM_MODEL_PLUS
-        self.glm_model_flash = self.haiku_model if self.bedrock_client else config.GLM_MODEL_FLASH
+        self.glm_model_plus = config.GLM_MODEL_PLUS
+        self.glm_model_flash = config.GLM_MODEL_FLASH
 
-        if self.bedrock_client:
-            print(f"[ModelRouter] 主力模型: Haiku 4.5 ({self.haiku_model})")
-        elif self.glm_client:
+        if self.glm_client:
             print(f"[ModelRouter] 主力模型: GLM ({self.glm_model})")
 
         self.budget = config.SONNET_BUDGET_PER_USER
@@ -218,19 +200,12 @@ class ModelRouter:
     def get_client_for_user(self, user_id: str) -> tuple:
         """
         返回 (client, model, provider)
-
-        Bedrock 路径返回 boto3 原生客户端，
-        GLM 路径返回 OpenAI 兼容客户端。
-        调用方通过 provider 判断走 bedrock_native 还是 OpenAI SDK。
+        所有 Agent 统一走 GLM，Bedrock 仅用于报告解读。
         """
-        if self.bedrock_client:
-            return self.bedrock_client, self.haiku_model, "haiku"
-
         if self.glm_client:
-            print(f"[ModelRouter] Haiku 不可用，回退到 GLM")
             return self.glm_client, self.glm_model, "glm"
 
-        raise RuntimeError("无可用的 LLM 模型（Haiku 和 GLM 均未配置）")
+        raise RuntimeError("无可用的 LLM 模型（GLM 未配置）")
 
     def record_usage(self, user_id: str, provider: str, model: str,
                      input_tokens: int, output_tokens: int):

@@ -663,20 +663,25 @@ class ChatAgent:
         self.report_agent = ReportAgent(client, model, provider)
         self._model_flash = _model_flash
 
-        # Bedrock 原生客户端（报告解读 Sonnet + 所有 Agent 共用）
-        self.bedrock_client = model_router.bedrock_client if model_router else None
-        self.bedrock_model = config.SONNET_MODEL_ID
-
-        if not self.bedrock_client and config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
-            try:
-                self.bedrock_client = create_bedrock_client()
-            except Exception as e:
-                print(f"[Orchestrator] Bedrock 初始化失败: {e}")
-
-        if self.bedrock_client:
-            print(f"[Orchestrator] Bedrock 客户端已就绪，报告解读使用 Sonnet: {self.bedrock_model}")
-        else:
-            print("[Orchestrator] AWS 未配置，报告解读将使用主力模型")
+        # Bedrock 原生客户端（仅报告解读用，读 AWS_BEDROCK_* 环境变量）
+        import os, boto3
+        self.bedrock_client = None
+        self.bedrock_model = os.getenv('AWS_BEDROCK_MODEL', 'anthropic.claude-sonnet-4-6')
+        try:
+            ak = os.getenv('AWS_BEDROCK_ACCESS_KEY')
+            sk = os.getenv('AWS_BEDROCK_SECRET_KEY')
+            if ak and sk:
+                self.bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_BEDROCK_REGION', 'us-east-1'),
+                    aws_access_key_id=ak,
+                    aws_secret_access_key=sk,
+                )
+                print(f"[Orchestrator] Bedrock 客户端初始化成功，报告解读使用 Sonnet: {self.bedrock_model}")
+            else:
+                print("[Orchestrator] AWS_BEDROCK 未配置，报告解读将使用主力模型")
+        except Exception as e:
+            print(f"[Orchestrator] Bedrock 初始化失败，报告解读将回退到主力模型: {e}")
 
         haiku_id = model_router.haiku_model if model_router else "N/A"
         print("[Orchestrator] 多 Agent 系统初始化完成")

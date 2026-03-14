@@ -153,12 +153,12 @@ class Config:
     @property
     def SONNET_MODEL_ID(self) -> str:
         """AWS Bedrock Sonnet 模型 ID"""
-        return os.getenv('SONNET_MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
+        return os.getenv('SONNET_MODEL_ID', 'anthropic.claude-sonnet-4-6')
 
     @property
     def HAIKU_MODEL_ID(self) -> str:
         """AWS Bedrock Haiku 模型 ID"""
-        return os.getenv('HAIKU_MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
+        return os.getenv('HAIKU_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0')
 
     # ===========================================
     # GLM (智谱) 配置 - 降级备用模型
