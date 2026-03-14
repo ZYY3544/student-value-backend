@@ -793,9 +793,6 @@ def assess():
         if not resume_text:
             return jsonify({'success': False, 'error': '请提供简历内容'}), 400
 
-        # 读取 retryCount（前端传来，用于信息不足二次容错）
-        retry_count = int(data.get('retryCount', 0))
-
         # 读取前端传来的页面停留时长（秒）
         welcome_s = data.get('welcomeS')
         form_s = data.get('formS')
@@ -803,7 +800,7 @@ def assess():
         # 评估文本
         eval_text = resume_text
 
-        print(f"\n[小程序评估] 类型={assessment_type}, 职位={job_title}, 职能={job_function}, retryCount={retry_count}")
+        print(f"\n[小程序评估] 类型={assessment_type}, 职位={job_title}, 职能={job_function}")
         print(f"[调试] 原始resume_text长度={len(resume_text_raw)}字符")
         print(f"[调试] 解析后resume_text长度={len(resume_text)}字符")
         print(f"[调试] eval_text前500字:\n{eval_text[:500] if eval_text else '(空)'}\n")
@@ -825,29 +822,6 @@ def assess():
             assessment_type=assessment_type
         )
         _t['convergence_end'] = time.time()
-
-        # 信息不足拦截：必须在 best_solution 检查之前，因为信息不足可能导致收敛失败
-        if convergence_result and convergence_result.get('insufficient_input') and retry_count == 0:
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            log_id = _insert_log({
-                'time': now, 'type': 'insufficient',
-                'city': raw_city, 'industry': industry, 'function': job_function, 'title': job_title,
-                'resume_len': len(resume_text),
-                'invite_code': None,
-                'welcome_s': welcome_s,
-                'form_s': form_s,
-                'school_name': school_name or None,
-                'education_level': education_level or None,
-                'school_tier': school_tier or None,
-                'major': major or None,
-                'company_type': company_type or None,
-                'target_company': target_company or None,
-            })
-            assessment_counter = log_id
-            print(f"\n⚠️ 信息不足拦截 #{log_id} | {now}")
-            print(f"输入: {raw_city} | {industry} | {job_function} | {job_title}")
-            print(f"简历: {len(resume_text)}字 | 首次提交，返回422")
-            return jsonify({'success': False, 'error': 'insufficient_input'}), 422
 
         if not convergence_result or not convergence_result.get('best_solution'):
             # 如果收敛失败，使用默认值
@@ -924,7 +898,6 @@ def assess():
         _t['tag_end'] = time.time()
 
         # 7. AI 深度评估已移除（功能由聊天 Agent 承接）
-        is_insufficient = bool(convergence_result and convergence_result.get('insufficient_input'))
 
         # 8. 生成 Sparky 开场白（DiagnosisAgent，利用评估结果生成个性化欢迎语）
         # 8. 生成 Sparky 开场白（DiagnosisAgent）
@@ -1008,7 +981,7 @@ def assess():
         log_id = _insert_log({
             'time': now, 'type': 'success',
             'city': raw_city, 'industry': industry, 'function': job_function, 'title': job_title,
-            'resume_len': len(resume_text), 'retry': retry_count, 'insufficient': is_insufficient,
+            'resume_len': len(resume_text), 'retry': 0, 'insufficient': False,
             'resume_text': resume_text,
             'grade': job_grade, 'tag': level_tag, 'salary': salary_range,
             'factors_detail': {
@@ -1037,7 +1010,7 @@ def assess():
         print(f"──────────────────────────────────────────")
         print(f"输入: {raw_city} | {industry} | {job_function} | {job_title}")
         print(f"学校: {school_name} ({school_tier}) | 学历: {education_level}")
-        print(f"简历: {len(resume_text)}字 | 重试: {retry_count} | 信息不足: {'是' if is_insufficient else '否'}")
+        print(f"简历: {len(resume_text)}字")
         print(f"──────────────────────────────────────────")
         print(f"结果: 职级{job_grade} | {level_tag} | {salary_range}")
         print(f"因素: PK={factors['practical_knowledge']} MK={factors['managerial_knowledge']} Comm={factors['communication']} TE={factors['thinking_environment']} TC={factors['thinking_challenge']}")

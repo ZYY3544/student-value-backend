@@ -1075,8 +1075,6 @@ class IncrementalConvergence:
         max_retries = 3
         last_exception = None
         pk_range = None
-        insufficient_input = False
-
         logger.info("[Step 1] 提取PK档位（带符号，Nature使用默认值N）")
 
         for attempt in range(1, max_retries + 1):
@@ -1098,15 +1096,6 @@ class IncrementalConvergence:
                 education = pk_result.get('education', '未知')
                 logger.info(f"  - 学历: {education}")
                 pk_range = self._apply_pk_education_floor(pk_range, education)
-
-                # 检测信息不足：reasoning 中包含特定关键词
-                pk_reasoning = pk_result.get('reasoning', '')
-                insufficient_input = (
-                    '无实质性职业信息' in pk_reasoning or
-                    '无法进行有效评估' in pk_reasoning
-                )
-                if insufficient_input:
-                    logger.warning(f"⚠ 检测到简历信息不足: {pk_reasoning[:100]}")
 
                 logger.info(f"✓ LLM提取成功 (第{attempt}次尝试)")
                 logger.info(f"  - 专业知识档位: {pk_range}（带符号单一档位）")
@@ -1369,7 +1358,7 @@ class IncrementalConvergence:
                     if fallback_solutions:
                         valid_solutions = fallback_solutions
                     else:
-                        return {'best_solution': None, 'match_score': 0, 'all_valid_solutions': [], 'convergence_stats': {}, 'insufficient_input': insufficient_input}
+                        return {'best_solution': None, 'match_score': 0, 'all_valid_solutions': [], 'convergence_stats': {}}
 
         # 使用两阶段选择策略（先Profile匹配度，再职级策略）
         best_solution, best_score = self._select_solution_by_grade_strategy(
@@ -1506,7 +1495,6 @@ class IncrementalConvergence:
         return {
             'best_solution': best_solution,
             'match_score': best_score,
-            'insufficient_input': insufficient_input,
             'all_valid_solutions': valid_solutions,
             'convergence_stats': {
                 'kh_combinations': len(kh_combinations),
