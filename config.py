@@ -158,7 +158,7 @@ class Config:
     @property
     def HAIKU_MODEL_ID(self) -> str:
         """AWS Bedrock Haiku 模型 ID"""
-        return os.getenv('HAIKU_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0')
+        return os.getenv('HAIKU_MODEL_ID', 'global.anthropic.claude-haiku-4-5-20251001-v1:0')
 
     # ===========================================
     # GLM (智谱) 配置 - 降级备用模型

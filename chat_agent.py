@@ -666,7 +666,7 @@ class ChatAgent:
         # Bedrock 原生客户端（仅报告解读用，读 AWS_BEDROCK_* 环境变量）
         import os, boto3
         self.bedrock_client = None
-        self.bedrock_model = os.getenv('AWS_BEDROCK_MODEL', 'us.anthropic.claude-sonnet-4-6')
+        self.bedrock_model = os.getenv('AWS_BEDROCK_MODEL', 'global.anthropic.claude-sonnet-4-6')
         try:
             ak = os.getenv('AWS_BEDROCK_ACCESS_KEY')
             sk = os.getenv('AWS_BEDROCK_SECRET_KEY')
