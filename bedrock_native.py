@@ -80,7 +80,9 @@ def _extract_system_and_messages(messages):
                     })
                 anthropic_messages.append({"role": "assistant", "content": content_blocks})
             else:
-                anthropic_messages.append({"role": "assistant", "content": content or ""})
+                # Anthropic API 不接受空字符串 content，必须有实际文本
+                safe_content = content if content else "好的。"
+                anthropic_messages.append({"role": "assistant", "content": safe_content})
 
         elif role == "tool":
             tool_content = content if isinstance(content, str) else json.dumps(content)
@@ -219,6 +221,20 @@ def bedrock_stream(client, model, messages, system=None, temperature=0.7,
 
     tool_index = -1
     for event in response['body']:
+        # 处理 Bedrock 流式错误事件
+        if "internalServerException" in event:
+            err = event["internalServerException"]
+            raise RuntimeError(f"Bedrock 内部错误: {err.get('message', str(err))}")
+        if "modelStreamErrorException" in event:
+            err = event["modelStreamErrorException"]
+            raise RuntimeError(f"Bedrock 流式错误: {err.get('message', str(err))}")
+        if "throttlingException" in event:
+            err = event["throttlingException"]
+            raise RuntimeError(f"Bedrock 限流(429): {err.get('message', str(err))}")
+        if "validationException" in event:
+            err = event["validationException"]
+            raise RuntimeError(f"Bedrock 参数校验失败: {err.get('message', str(err))}")
+
         chunk_bytes = event.get("chunk", {}).get("bytes", b"")
         if not chunk_bytes:
             continue
