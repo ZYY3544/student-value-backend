@@ -1195,46 +1195,56 @@ class ChatAgent:
 - 全文 300-450 字
 - 输出到「可以加强的方向」结束，不要输出引导问题（引导问题由系统自动追加）"""
 
+    def _call_glm_stream(self, system_prompt: str) -> Generator[str, None, None]:
+        """GLM 流式调用（供报告解读使用）"""
+        response = self.diagnosis_agent.client.chat.completions.create(
+            model=self.diagnosis_agent.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+            ],
+            temperature=0.5,
+            stream=True,
+        )
+        for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
         """V2: 报告解读流式输出（Bedrock Claude Sonnet → GLM fallback），引导问题由代码追加"""
         system_prompt = self._build_report_analysis_prompt(session)
+        used_bedrock = False
 
         try:
             if self.bedrock_client:
                 # ===== Bedrock Claude Sonnet =====
                 print(f"[Orchestrator] 报告解读使用 Bedrock: {self.bedrock_model}")
-                response = self.bedrock_client.invoke_model_with_response_stream(
-                    modelId=self.bedrock_model,
-                    contentType='application/json',
-                    body=json.dumps({
-                        "anthropic_version": "bedrock-2023-05-31",
-                        "max_tokens": 1024,
-                        "temperature": 0.5,
-                        "system": system_prompt,
-                        "messages": [
-                            {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                        ]
-                    })
-                )
-                for event in response['body']:
-                    chunk = json.loads(event['chunk']['bytes'])
-                    if chunk['type'] == 'content_block_delta':
-                        yield chunk['delta'].get('text', '')
+                try:
+                    response = self.bedrock_client.invoke_model_with_response_stream(
+                        modelId=self.bedrock_model,
+                        contentType='application/json',
+                        body=json.dumps({
+                            "anthropic_version": "bedrock-2023-05-31",
+                            "max_tokens": 1024,
+                            "temperature": 0.5,
+                            "system": system_prompt,
+                            "messages": [
+                                {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                            ]
+                        })
+                    )
+                    for event in response['body']:
+                        chunk = json.loads(event['chunk']['bytes'])
+                        if chunk['type'] == 'content_block_delta':
+                            yield chunk['delta'].get('text', '')
+                    used_bedrock = True
+                except Exception as bedrock_err:
+                    print(f"[Orchestrator] Bedrock 调用失败 ({type(bedrock_err).__name__}: {bedrock_err})，自动回退到 GLM")
+                    yield from self._call_glm_stream(system_prompt)
             else:
-                # ===== GLM fallback =====
-                print(f"[Orchestrator] 报告解读回退到 GLM: {self.diagnosis_agent.model}")
-                response = self.diagnosis_agent.client.chat.completions.create(
-                    model=self.diagnosis_agent.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                    ],
-                    temperature=0.5,
-                    stream=True,
-                )
-                for chunk in response:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
+                # ===== 无 Bedrock 客户端，直接用 GLM =====
+                print(f"[Orchestrator] 报告解读使用 GLM: {self.diagnosis_agent.model}")
+                yield from self._call_glm_stream(system_prompt)
 
             # 程序化追加引导问题
             ctx = session["assessment_context"]
