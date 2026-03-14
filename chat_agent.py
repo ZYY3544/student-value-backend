@@ -33,7 +33,6 @@ import json
 import time
 import os
 import threading
-import boto3
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
 from openai import OpenAI
@@ -654,41 +653,29 @@ class ChatAgent:
         self.model_router = model_router  # 多模型路由器（Sonnet/GLM 切换）
         self.session_manager = SessionManager(ttl_seconds=3600)
 
-        # 初始化子 Agent — 按任务复杂度分配不同模型
-        # 核心改写：GLM-4-Plus  轻量任务：GLM-4-Flash
+        # 初始化子 Agent — 统一使用主力模型（Haiku 4.5 或 GLM fallback）
         _model_plus = model_router.glm_model_plus if model_router else model
         _model_flash = model_router.glm_model_flash if model_router else model
-        self.diagnosis_agent = DiagnosisAgent(client, _model_plus)   # 开场白 → Plus
-        self.planning_agent = PlanningAgent(client, _model_plus)     # 优化规划 → Plus
-        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写 → GLM-4-Plus
-        self.report_agent = ReportAgent(client, model)               # 总结报告 → GLM-4-Plus
+        self.diagnosis_agent = DiagnosisAgent(client, _model_plus)   # 开场白
+        self.planning_agent = PlanningAgent(client, _model_plus)     # 优化规划
+        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写
+        self.report_agent = ReportAgent(client, model)               # 总结报告
         self._model_flash = _model_flash  # 供简历拆分使用
 
-        # Bedrock 客户端（可选，用于报告解读调用 Claude Sonnet）
-        self.bedrock_client = None
-        self.bedrock_model = os.getenv('AWS_BEDROCK_MODEL', 'anthropic.claude-sonnet-4-6')
-        try:
-            ak = os.getenv('AWS_BEDROCK_ACCESS_KEY')
-            sk = os.getenv('AWS_BEDROCK_SECRET_KEY')
-            if ak and sk:
-                self.bedrock_client = boto3.client(
-                    'bedrock-runtime',
-                    region_name=os.getenv('AWS_BEDROCK_REGION', 'us-east-1'),
-                    aws_access_key_id=ak,
-                    aws_secret_access_key=sk,
-                )
-                print("[Orchestrator] Bedrock 客户端初始化成功，报告解读将使用 Claude Sonnet")
-        except Exception as e:
-            print(f"[Orchestrator] Bedrock 初始化失败，报告解读将回退到 GLM: {e}")
+        # 报告解读使用 model_router 中的 Sonnet 客户端（无需单独初始化 boto3）
+        if model_router and model_router.sonnet_client:
+            print("[Orchestrator] 报告解读将使用 Claude Sonnet（via ModelRouter）")
+        else:
+            print("[Orchestrator] Sonnet 未配置，报告解读将使用主力模型")
 
-        print("[Orchestrator] 多 Agent 系统初始化完成（多模型梯队）")
+        print("[Orchestrator] 多 Agent 系统初始化完成")
         print(f"  - DiagnosisAgent: 开场诊断 → {_model_plus}（温度 {DiagnosisAgent.TEMPERATURE}）")
         print(f"  - PlanningAgent:  优化规划 → {_model_plus}（温度 {PlanningAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化 → {model}（温度 {OptimizeAgent.TEMPERATURE}）")
         print(f"  - ReportAgent:    总结报告 → {model}（温度 {ReportAgent.TEMPERATURE}）")
         print(f"  - 简历拆分:       → {_model_flash}")
         if model_router:
-            print(f"  - ModelRouter:    Sonnet/GLM 自动切换已启用")
+            print(f"  - ModelRouter:    Haiku/GLM 自动切换已启用")
         if llm_service and convergence_engine:
             print(f"  - ToolExecutor:   Function Call 工具调用已启用")
 
@@ -696,7 +683,7 @@ class ChatAgent:
         """
         根据用户 ID 解析应使用的模型，并更新所有子 Agent
 
-        如果配置了 model_router，则根据用户用量选择 GLM 或 Sonnet；
+        如果配置了 model_router，则根据用户用量选择 Haiku 或 GLM；
         否则回退到默认的 client/model。
 
         Returns:
@@ -712,14 +699,15 @@ class ChatAgent:
             print("[Orchestrator] ModelRouter 无可用模型，回退默认 client")
             return self.client, self.model, "glm"
 
-        # 更新所有子 Agent 的 client（共用），但保持各自的模型分层
+        # 更新所有子 Agent 的 client 和 model
         self.diagnosis_agent.client = client
+        self.diagnosis_agent.model = model
         self.planning_agent.client = client
+        self.planning_agent.model = model
         self.optimize_agent.client = client
-        self.optimize_agent.model = model  # 核心改写跟随主模型
+        self.optimize_agent.model = model
         self.report_agent.client = client
-        self.report_agent.model = model    # 报告生成跟随主模型
-        # diagnosis_agent 和 planning_agent 保持 Plus 模型不变
+        self.report_agent.model = model
 
         return client, model, provider
 
@@ -1195,8 +1183,8 @@ class ChatAgent:
 - 全文 300-450 字
 - 输出到「可以加强的方向」结束，不要输出引导问题（引导问题由系统自动追加）"""
 
-    def _call_glm_stream(self, system_prompt: str) -> Generator[str, None, None]:
-        """GLM 流式调用（供报告解读使用）"""
+    def _call_fallback_stream(self, system_prompt: str) -> Generator[str, None, None]:
+        """备用模型流式调用（供报告解读 fallback 使用）"""
         response = self.diagnosis_agent.client.chat.completions.create(
             model=self.diagnosis_agent.model,
             messages=[
@@ -1211,40 +1199,37 @@ class ChatAgent:
                 yield chunk.choices[0].delta.content
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
-        """V2: 报告解读流式输出（Bedrock Claude Sonnet → GLM fallback），引导问题由代码追加"""
+        """V2: 报告解读流式输出（Bedrock Sonnet → Haiku/GLM fallback），引导问题由代码追加"""
         system_prompt = self._build_report_analysis_prompt(session)
-        used_bedrock = False
 
         try:
-            if self.bedrock_client:
-                # ===== Bedrock Claude Sonnet =====
-                print(f"[Orchestrator] 报告解读使用 Bedrock: {self.bedrock_model}")
+            # 优先使用 model_router 中的 Sonnet 客户端（OpenAI 兼容接口）
+            sonnet_client = self.model_router.sonnet_client if self.model_router else None
+            sonnet_model = self.model_router.sonnet_model if self.model_router else None
+
+            if sonnet_client:
+                print(f"[Orchestrator] 报告解读使用 Sonnet: {sonnet_model}")
                 try:
-                    response = self.bedrock_client.invoke_model_with_response_stream(
-                        modelId=self.bedrock_model,
-                        contentType='application/json',
-                        body=json.dumps({
-                            "anthropic_version": "bedrock-2023-05-31",
-                            "max_tokens": 1024,
-                            "temperature": 0.5,
-                            "system": system_prompt,
-                            "messages": [
-                                {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                            ]
-                        })
+                    response = sonnet_client.chat.completions.create(
+                        model=sonnet_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                        ],
+                        temperature=0.5,
+                        max_tokens=1024,
+                        stream=True,
                     )
-                    for event in response['body']:
-                        chunk = json.loads(event['chunk']['bytes'])
-                        if chunk['type'] == 'content_block_delta':
-                            yield chunk['delta'].get('text', '')
-                    used_bedrock = True
-                except Exception as bedrock_err:
-                    print(f"[Orchestrator] Bedrock 调用失败 ({type(bedrock_err).__name__}: {bedrock_err})，自动回退到 GLM")
-                    yield from self._call_glm_stream(system_prompt)
+                    for chunk in response:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            yield chunk.choices[0].delta.content
+                except Exception as sonnet_err:
+                    print(f"[Orchestrator] Sonnet 调用失败 ({type(sonnet_err).__name__}: {sonnet_err})，自动回退")
+                    yield from self._call_fallback_stream(system_prompt)
             else:
-                # ===== 无 Bedrock 客户端，直接用 GLM =====
-                print(f"[Orchestrator] 报告解读使用 GLM: {self.diagnosis_agent.model}")
-                yield from self._call_glm_stream(system_prompt)
+                # 无 Sonnet 客户端，用当前主力模型
+                print(f"[Orchestrator] 报告解读使用主力模型: {self.diagnosis_agent.model}")
+                yield from self._call_fallback_stream(system_prompt)
 
             # 程序化追加引导问题
             ctx = session["assessment_context"]

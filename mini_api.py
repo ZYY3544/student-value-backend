@@ -529,19 +529,20 @@ try:
 except Exception as e:
     print(f"⚠ 模型路由器初始化失败: {e}")
 
-# LLM 服务（评估引擎用）- 使用 GLM 模型
+# LLM 服务（评估引擎用）- 使用主力模型（Haiku → GLM fallback）
 llm_service = None
 llm_service_pk = None
-if model_router and model_router.glm_client:
+if model_router:
     try:
+        _primary_client, _primary_model, _primary_provider = model_router.get_client_for_user(None)
         llm_service = LLMService(
-            client=model_router.glm_client,
-            model=model_router.glm_model
+            client=_primary_client,
+            model=_primary_model
         )
-        print(f"✓ LLM服务初始化成功（GLM 模型: {model_router.glm_model}）")
-        llm_service_pk = llm_service  # 默认用 GLM，下面尝试用 DeepSeek 覆盖
+        print(f"✓ LLM服务初始化成功（{_primary_provider} 模型: {_primary_model}）")
+        llm_service_pk = llm_service
     except Exception as e:
-        print(f"✗ GLM LLM服务初始化失败: {e}")
+        print(f"✗ LLM服务初始化失败: {e}")
 
 # PK 专用 LLM 服务 — 优先使用 DeepSeek（判断 PK 档位更准确）
 if config.DEEPSEEK_API_KEY:
@@ -560,7 +561,7 @@ if config.DEEPSEEK_API_KEY:
         print(f"⚠ DeepSeek 初始化失败，PK判断继续使用 GLM: {e}")
 
 if llm_service is None:
-    print("✗ LLM服务初始化失败: GLM 未配置，请设置 GLM_API_KEY 环境变量")
+    print("✗ LLM服务初始化失败: 无可用模型，请配置 AWS Bedrock 或 GLM_API_KEY")
     exit(1)
 
 # 简历拆分缓存（评估阶段后台启动，chat/start 时取用）
@@ -920,9 +921,10 @@ def assess():
                     'targetCompany': target_company,
                 }
                 from multi_agent import DiagnosisAgent
-                _greeting_agent = DiagnosisAgent(model_router.glm_client, model_router.glm_model_plus)
+                _primary_c, _primary_m, _primary_p = model_router.get_client_for_user(None)
+                _greeting_agent = DiagnosisAgent(_primary_c, _primary_m)
                 _greeting = _greeting_agent.diagnose(_greeting_ctx, resume_text)
-                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字，模型: {model_router.glm_model_plus}）")
+                print(f"[步骤8] Sparky 开场白已生成（{len(_greeting)}字，模型: {_primary_m}，provider: {_primary_p}）")
             except Exception as e:
                 print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
         _t['greeting_end'] = time.time()
@@ -932,10 +934,11 @@ def assess():
         _split_result = [None]
         def _bg_split_after_greeting():
             try:
+                _split_c, _split_m, _split_p = model_router.get_client_for_user(None)
                 _split_result[0] = split_resume_sections(
-                    model_router.glm_client, model_router.glm_model_flash, resume_text
+                    _split_c, _split_m, resume_text
                 )
-                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落（模型: {model_router.glm_model_flash}）")
+                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落（模型: {_split_m}）")
             except Exception as e:
                 print(f"[评估→后台] 简历拆分失败: {e}")
         _split_thread = threading.Thread(target=_bg_split_after_greeting, daemon=True)

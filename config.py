@@ -155,6 +155,11 @@ class Config:
         """AWS Bedrock Sonnet 模型 ID"""
         return os.getenv('SONNET_MODEL_ID', 'anthropic.claude-sonnet-4-20250514')
 
+    @property
+    def HAIKU_MODEL_ID(self) -> str:
+        """AWS Bedrock Haiku 模型 ID"""
+        return os.getenv('HAIKU_MODEL_ID', 'anthropic.claude-haiku-4-5-20251001-v1:0')
+
     # ===========================================
     # GLM (智谱) 配置 - 降级备用模型
     # ===========================================
@@ -286,8 +291,9 @@ class Config:
         print("=" * 60)
         print(f"项目根目录: {self.BASE_DIR}")
         print(f"AWS Bedrock: {'已配置' if self.AWS_ACCESS_KEY_ID else '未配置'} (Region: {self.AWS_REGION})")
+        print(f"Haiku 模型: {self.HAIKU_MODEL_ID}")
         print(f"Sonnet 模型: {self.SONNET_MODEL_ID}")
-        print(f"GLM API Key: {'已配置' if self.GLM_API_KEY else '未配置'}")
+        print(f"GLM API Key: {'已配置（备用）' if self.GLM_API_KEY else '未配置'}")
         print(f"GLM 模型: {self.GLM_MODEL}")
         print(f"用户 Sonnet 预算: ¥{self.SONNET_BUDGET_PER_USER}/人")
         print(f"薪酬数据文件: {self.SALARY_CSV_PATH}")

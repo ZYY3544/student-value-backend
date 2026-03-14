@@ -476,17 +476,32 @@ class GLMCompatibleClient:
 
 class ModelRouter:
     """
-    模型路由器 - 统一使用 GLM，Sonnet 仅作为备用
+    模型路由器 - 统一使用 Haiku 4.5，GLM 作为备用
 
     策略：
-    1. 优先使用 GLM（默认 glm-4.5）
-    2. GLM 不可用时回退 Sonnet
+    1. 优先使用 AWS Bedrock Haiku 4.5
+    2. Haiku 不可用时回退 GLM
     """
 
     def __init__(self, usage_tracker: UsageTracker):
         self.usage_tracker = usage_tracker
 
-        # 初始化 Sonnet 客户端 (AWS Bedrock)
+        # 初始化 Haiku 客户端 (AWS Bedrock) — 主力模型
+        self.haiku_client = None
+        self.haiku_model = config.HAIKU_MODEL_ID
+        if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
+            try:
+                self.haiku_client = BedrockOpenAIClient(
+                    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+                    region=config.AWS_REGION,
+                    model=self.haiku_model
+                )
+                print(f"[ModelRouter] Haiku 客户端初始化成功 (model={self.haiku_model})")
+            except Exception as e:
+                print(f"[ModelRouter] Haiku 客户端初始化失败: {e}")
+
+        # 初始化 Sonnet 客户端 (AWS Bedrock) — 报告解读专用
         self.sonnet_client = None
         self.sonnet_model = config.SONNET_MODEL_ID
         if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
@@ -501,7 +516,7 @@ class ModelRouter:
             except Exception as e:
                 print(f"[ModelRouter] Sonnet 客户端初始化失败: {e}")
 
-        # 初始化 GLM 客户端 (OpenAI 兼容接口，带兼容层)
+        # 初始化 GLM 客户端 (OpenAI 兼容接口，带兼容层) — 备用
         self.glm_client = None
         self.glm_model = config.GLM_MODEL
         if config.GLM_API_KEY:
@@ -512,15 +527,19 @@ class ModelRouter:
                     base_url=config.GLM_BASE_URL
                 )
                 self.glm_client = GLMCompatibleClient(raw_client)
-                print(f"[ModelRouter] GLM 客户端初始化成功 (model={self.glm_model})")
+                print(f"[ModelRouter] GLM 客户端初始化成功 (model={self.glm_model}，备用)")
             except Exception as e:
                 print(f"[ModelRouter] GLM 客户端初始化失败: {e}")
 
-        # 多模型梯队（共用同一个 client，只切换 model name）
-        self.glm_model_plus = config.GLM_MODEL_PLUS    # 开场白、PlanningAgent
-        self.glm_model_flash = config.GLM_MODEL_FLASH  # 轻量任务：简历拆分
-        if self.glm_client:
-            print(f"[ModelRouter] GLM 模型梯队: {self.glm_model}(核心) / {self.glm_model_flash}(轻量)")
+        # 模型梯队 — Haiku 统一使用同一个 model ID（不分 plus/flash）
+        # 保留 glm_model_plus/flash 兼容属性，指向 haiku_model
+        self.glm_model_plus = self.haiku_model if self.haiku_client else config.GLM_MODEL_PLUS
+        self.glm_model_flash = self.haiku_model if self.haiku_client else config.GLM_MODEL_FLASH
+
+        if self.haiku_client:
+            print(f"[ModelRouter] 主力模型: Haiku 4.5 ({self.haiku_model})")
+        elif self.glm_client:
+            print(f"[ModelRouter] 主力模型: GLM ({self.glm_model})")
 
         self.budget = config.SONNET_BUDGET_PER_USER
 
@@ -528,21 +547,26 @@ class ModelRouter:
         """
         根据用户返回合适的 (client, model, provider)
 
-        当前策略：统一使用 GLM，Sonnet 仅作为备用
+        当前策略：统一使用 Haiku 4.5，GLM 备用
 
         Returns:
             (client, model_name, provider_name)
         """
-        # 优先使用 GLM
+        # 优先使用 Haiku
+        if self.haiku_client:
+            return self.haiku_client, self.haiku_model, "haiku"
+
+        # Haiku 不可用时回退 GLM
         if self.glm_client:
+            print(f"[ModelRouter] Haiku 不可用，回退到 GLM")
             return self.glm_client, self.glm_model, "glm"
 
-        # GLM 不可用时回退 Sonnet
+        # GLM 也不可用时尝试 Sonnet
         if self.sonnet_client:
-            print(f"[ModelRouter] GLM 不可用，回退到 Sonnet")
+            print(f"[ModelRouter] Haiku/GLM 不可用，回退到 Sonnet")
             return self.sonnet_client, self.sonnet_model, "sonnet"
 
-        raise RuntimeError("无可用的 LLM 模型（GLM 和 Sonnet 均未配置）")
+        raise RuntimeError("无可用的 LLM 模型（Haiku、GLM 和 Sonnet 均未配置）")
 
     def record_usage(self, user_id: str, provider: str, model: str,
                      input_tokens: int, output_tokens: int):
