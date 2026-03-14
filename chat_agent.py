@@ -835,11 +835,12 @@ class ChatAgent:
         else:
             # 后台异步拆分，不阻塞 /chat/start 响应
             _split_client, _split_model = _bg_client, self._model_flash
+            _split_provider = active_provider
             _split_session_id = session_id
             _split_sm = self.session_manager
             def _bg_split():
                 try:
-                    sections = split_resume_sections(_split_client, _split_model, resume_text)
+                    sections = split_resume_sections(_split_client, _split_model, resume_text, provider=_split_provider)
                     _split_sm.update_session(_split_session_id, {
                         "resume_sections": sections
                     })
@@ -1231,9 +1232,17 @@ class ChatAgent:
                         })
                     )
                     for event in response['body']:
+                        # 跳过非 chunk 事件（错误事件等）
+                        if 'chunk' not in event or 'bytes' not in event.get('chunk', {}):
+                            # 检查是否是错误事件
+                            for err_key in ('internalServerException', 'modelStreamErrorException',
+                                            'throttlingException', 'validationException'):
+                                if err_key in event:
+                                    raise RuntimeError(f"Bedrock 流式错误: {event[err_key].get('message', str(event[err_key]))}")
+                            continue
                         chunk = json.loads(event['chunk']['bytes'])
-                        if chunk['type'] == 'content_block_delta':
-                            yield chunk['delta'].get('text', '')
+                        if chunk.get('type') == 'content_block_delta':
+                            yield chunk.get('delta', {}).get('text', '')
                 except Exception as sonnet_err:
                     print(f"[Orchestrator] Sonnet 调用失败 ({type(sonnet_err).__name__}: {sonnet_err})，自动回退")
                     yield from self._call_fallback_stream(system_prompt)
