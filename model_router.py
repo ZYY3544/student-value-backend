@@ -561,24 +561,6 @@ class ModelRouter:
             except Exception as e:
                 print(f"[ModelRouter] Sonnet 客户端初始化失败: {e}")
 
-        # Bedrock 连通性检测 — 防止地理限制导致运行时全部报错
-        if self.haiku_client:
-            try:
-                self.haiku_client.chat.completions.create(
-                    messages=[{"role": "user", "content": "hi"}],
-                    max_tokens=1,
-                    temperature=0,
-                )
-                print(f"[ModelRouter] Bedrock 连通性检测通过")
-            except Exception as e:
-                err_msg = str(e)
-                if "unsupported countries" in err_msg or "not allowed" in err_msg:
-                    print(f"[ModelRouter] ⚠ Bedrock 地理限制，自动禁用 Haiku/Sonnet，降级到 GLM: {e}")
-                else:
-                    print(f"[ModelRouter] ⚠ Bedrock 连通性检测失败，降级到 GLM: {e}")
-                self.haiku_client = None
-                self.sonnet_client = None
-
         # 初始化 GLM 客户端 (OpenAI 兼容接口，带兼容层) — 备用
         self.glm_client = None
         self.glm_model = config.GLM_MODEL
