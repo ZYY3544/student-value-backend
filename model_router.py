@@ -150,6 +150,7 @@ class _ToolCall:
     id: str = ""
     type: str = "function"
     function: object = None
+    index: int = 0
 
 @dataclass
 class _Function:
@@ -174,19 +175,22 @@ class _StreamChunk:
 
 
 class BedrockChatCompletions:
-    """模拟 openai.chat.completions 接口，内部调用 AWS Bedrock Converse API"""
+    """模拟 openai.chat.completions 接口，内部调用 AWS Bedrock InvokeModel API
+
+    使用 invoke_model / invoke_model_with_response_stream（Anthropic 原生格式），
+    而非 converse / converse_stream（后者有地域访问限制）。
+    """
 
     def __init__(self, bedrock_client, default_model: str):
         self._client = bedrock_client
         self._default_model = default_model
 
     def _convert_messages(self, messages: list) -> tuple:
-        """将 OpenAI 格式消息转换为 Bedrock 格式，分离 system prompt"""
-        system_prompts = []
-        bedrock_messages = []
+        """将 OpenAI 格式消息转换为 Anthropic Messages API 格式，分离 system prompt"""
+        system_text = ""
+        anthropic_messages = []
 
         for msg in messages:
-            # 兼容 dict 和 object 两种格式
             if isinstance(msg, dict):
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
@@ -199,13 +203,13 @@ class BedrockChatCompletions:
                 tool_call_id = getattr(msg, 'tool_call_id', '')
 
             if role == "system":
-                system_prompts.append({"text": content})
+                system_text = content
 
             elif role == "assistant":
                 if msg_tool_calls:
                     content_blocks = []
                     if content:
-                        content_blocks.append({"text": content})
+                        content_blocks.append({"type": "text", "text": content})
                     for tc in msg_tool_calls:
                         if isinstance(tc, dict):
                             fn = tc.get('function', {})
@@ -222,104 +226,93 @@ class BedrockChatCompletions:
                         except json.JSONDecodeError:
                             input_data = {}
                         content_blocks.append({
-                            "toolUse": {
-                                "toolUseId": tc_id,
-                                "name": fn_name,
-                                "input": input_data
-                            }
+                            "type": "tool_use",
+                            "id": tc_id,
+                            "name": fn_name,
+                            "input": input_data
                         })
-                    bedrock_messages.append({"role": "assistant", "content": content_blocks})
+                    anthropic_messages.append({"role": "assistant", "content": content_blocks})
                 else:
-                    bedrock_messages.append({"role": "assistant", "content": [{"text": content or ""}]})
+                    anthropic_messages.append({"role": "assistant", "content": content or ""})
 
             elif role == "tool":
                 tool_content = content if isinstance(content, str) else json.dumps(content)
-                bedrock_messages.append({
+                anthropic_messages.append({
                     "role": "user",
                     "content": [{
-                        "toolResult": {
-                            "toolUseId": tool_call_id,
-                            "content": [{"text": tool_content}]
-                        }
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": tool_content
                     }]
                 })
 
             else:  # user
-                bedrock_messages.append({"role": "user", "content": [{"text": content or ""}]})
+                anthropic_messages.append({"role": "user", "content": content or ""})
 
-        return system_prompts, bedrock_messages
+        return system_text, anthropic_messages
 
-    def _convert_tools(self, tools: list) -> dict:
-        """将 OpenAI tools 格式转换为 Bedrock toolConfig"""
+    def _convert_tools(self, tools: list) -> list:
+        """将 OpenAI tools 格式转换为 Anthropic tools 格式"""
         if not tools:
-            return {}
-
-        bedrock_tools = []
+            return []
+        anthropic_tools = []
         for tool in tools:
             fn = tool.get("function", {})
-            bedrock_tools.append({
-                "toolSpec": {
-                    "name": fn.get("name", ""),
-                    "description": fn.get("description", ""),
-                    "inputSchema": {
-                        "json": fn.get("parameters", {"type": "object", "properties": {}})
-                    }
-                }
+            anthropic_tools.append({
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {"type": "object", "properties": {}})
             })
-
-        return {"toolConfig": {"tools": bedrock_tools}}
+        return anthropic_tools
 
     def create(self, model=None, messages=None, temperature=0.7,
                stream=False, tools=None, response_format=None,
                max_tokens=4096, timeout=None, **kwargs):
         """OpenAI 兼容的 create 方法"""
         model = model or self._default_model
-        system_prompts, bedrock_messages = self._convert_messages(messages or [])
+        system_text, anthropic_messages = self._convert_messages(messages or [])
 
-        params = {
-            "modelId": model,
-            "messages": bedrock_messages,
-            "inferenceConfig": {
-                "temperature": temperature,
-                "maxTokens": max_tokens,
-            }
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": anthropic_messages,
         }
 
-        if system_prompts:
-            params["system"] = system_prompts
+        if system_text:
+            body["system"] = system_text
 
-        tool_config = self._convert_tools(tools)
-        if tool_config:
-            params.update(tool_config)
+        anthropic_tools = self._convert_tools(tools)
+        if anthropic_tools:
+            body["tools"] = anthropic_tools
 
         if stream:
-            return self._stream_response(params)
+            return self._stream_response(model, body)
         else:
-            return self._sync_response(params)
+            return self._sync_response(model, body)
 
-    def _sync_response(self, params):
-        """同步调用 Bedrock Converse"""
-        response = self._client.converse(**params)
-
-        output = response.get("output", {})
-        message = output.get("message", {})
-        content_blocks = message.get("content", [])
-        usage_data = response.get("usage", {})
+    def _sync_response(self, model, body):
+        """同步调用 Bedrock InvokeModel"""
+        response = self._client.invoke_model(
+            modelId=model,
+            contentType='application/json',
+            body=json.dumps(body)
+        )
+        result = json.loads(response['body'].read())
 
         text_content = ""
         tool_calls = []
 
-        for block in content_blocks:
-            if "text" in block:
-                text_content += block["text"]
-            elif "toolUse" in block:
-                tu = block["toolUse"]
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                text_content += block.get("text", "")
+            elif block.get("type") == "tool_use":
                 tool_calls.append(_ToolCall(
-                    id=tu.get("toolUseId", ""),
+                    id=block.get("id", ""),
                     type="function",
                     function=_Function(
-                        name=tu.get("name", ""),
-                        arguments=json.dumps(tu.get("input", {}))
+                        name=block.get("name", ""),
+                        arguments=json.dumps(block.get("input", {}))
                     )
                 ))
 
@@ -330,64 +323,101 @@ class BedrockChatCompletions:
             tool_calls=tool_calls if tool_calls else None
         )
 
+        usage_data = result.get("usage", {})
         return _CompletionResponse(
             choices=[_Choice(message=msg, finish_reason=finish_reason)],
             usage=_Usage(
-                prompt_tokens=usage_data.get("inputTokens", 0),
-                completion_tokens=usage_data.get("outputTokens", 0),
-                total_tokens=usage_data.get("inputTokens", 0) + usage_data.get("outputTokens", 0)
+                prompt_tokens=usage_data.get("input_tokens", 0),
+                completion_tokens=usage_data.get("output_tokens", 0),
+                total_tokens=usage_data.get("input_tokens", 0) + usage_data.get("output_tokens", 0)
             )
         )
 
-    def _stream_response(self, params):
-        """流式调用 Bedrock ConverseStream"""
-        response = self._client.converse_stream(**params)
-        return BedrockStreamIterator(response.get("stream", []))
+    def _stream_response(self, model, body):
+        """流式调用 Bedrock InvokeModelWithResponseStream"""
+        response = self._client.invoke_model_with_response_stream(
+            modelId=model,
+            contentType='application/json',
+            body=json.dumps(body)
+        )
+        return BedrockStreamIterator(response['body'])
 
 
 class BedrockStreamIterator:
-    """将 Bedrock 流式事件转为 OpenAI 兼容的 chunk 格式"""
+    """将 Bedrock InvokeModel 流式事件（Anthropic 原生格式）转为 OpenAI 兼容的 chunk 格式"""
 
     def __init__(self, event_stream):
         self._stream = event_stream
-        self.usage = None  # 流结束后可读取
+        self.usage = None
 
     def __iter__(self):
-        for event in self._stream:
-            if "contentBlockDelta" in event:
-                delta = event["contentBlockDelta"].get("delta", {})
-                if "text" in delta:
-                    yield _StreamChunk(choices=[
-                        _Choice(delta=_Delta(content=delta["text"]), finish_reason=None)
-                    ])
+        tool_index = -1  # 当前 tool_use block 的序号（供 OptimizeAgent 按 index 累积）
 
-            elif "contentBlockStart" in event:
-                start = event["contentBlockStart"].get("start", {})
-                if "toolUse" in start:
-                    tu = start["toolUse"]
+        for event in self._stream:
+            chunk_bytes = event.get("chunk", {}).get("bytes", b"")
+            if not chunk_bytes:
+                continue
+
+            data = json.loads(chunk_bytes)
+            event_type = data.get("type", "")
+
+            if event_type == "content_block_start":
+                block = data.get("content_block", {})
+                if block.get("type") == "tool_use":
+                    tool_index += 1
                     tc = _ToolCall(
-                        id=tu.get("toolUseId", ""),
+                        index=tool_index,
+                        id=block.get("id", ""),
                         type="function",
-                        function=_Function(name=tu.get("name", ""), arguments="")
+                        function=_Function(name=block.get("name", ""), arguments="")
                     )
                     yield _StreamChunk(choices=[
                         _Choice(delta=_Delta(tool_calls=[tc]), finish_reason=None)
                     ])
 
-            elif "messageStop" in event:
-                stop_reason = event["messageStop"].get("stopReason", "end_turn")
+            elif event_type == "content_block_delta":
+                delta = data.get("delta", {})
+                delta_type = delta.get("type", "")
+
+                if delta_type == "text_delta":
+                    yield _StreamChunk(choices=[
+                        _Choice(delta=_Delta(content=delta.get("text", "")), finish_reason=None)
+                    ])
+                elif delta_type == "input_json_delta":
+                    partial = delta.get("partial_json", "")
+                    if partial:
+                        tc = _ToolCall(
+                            index=tool_index,
+                            id="",
+                            type="function",
+                            function=_Function(name="", arguments=partial)
+                        )
+                        yield _StreamChunk(choices=[
+                            _Choice(delta=_Delta(tool_calls=[tc]), finish_reason=None)
+                        ])
+
+            elif event_type == "message_delta":
+                stop_reason = data.get("delta", {}).get("stop_reason", "end_turn")
                 finish = "tool_calls" if stop_reason == "tool_use" else "stop"
                 yield _StreamChunk(choices=[
                     _Choice(delta=_Delta(), finish_reason=finish)
                 ])
 
-            elif "metadata" in event:
-                meta_usage = event["metadata"].get("usage", {})
-                if meta_usage:
+                usage_data = data.get("usage", {})
+                if usage_data:
                     self.usage = _Usage(
-                        prompt_tokens=meta_usage.get("inputTokens", 0),
-                        completion_tokens=meta_usage.get("outputTokens", 0),
-                        total_tokens=meta_usage.get("inputTokens", 0) + meta_usage.get("outputTokens", 0)
+                        prompt_tokens=0,
+                        completion_tokens=usage_data.get("output_tokens", 0),
+                        total_tokens=usage_data.get("output_tokens", 0)
+                    )
+
+            elif event_type == "message_start":
+                msg_usage = data.get("message", {}).get("usage", {})
+                if msg_usage:
+                    self.usage = _Usage(
+                        prompt_tokens=msg_usage.get("input_tokens", 0),
+                        completion_tokens=0,
+                        total_tokens=msg_usage.get("input_tokens", 0)
                     )
 
 
