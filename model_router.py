@@ -438,7 +438,7 @@ class BedrockOpenAIClient:
     """
 
     def __init__(self, aws_access_key_id: str, aws_secret_access_key: str,
-                 region: str = 'us-east-1', model: str = 'anthropic.claude-sonnet-4-20250514'):
+                 region: str = 'us-east-1', model: str = 'us.anthropic.claude-sonnet-4-20250514'):
         import boto3
         self._bedrock = boto3.client(
             'bedrock-runtime',
