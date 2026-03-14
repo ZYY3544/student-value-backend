@@ -35,13 +35,11 @@ import os
 import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
-import boto3
-from openai import OpenAI
-
 from config import config
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, PlanningAgent
 from tool_executor import ToolExecutor
 from utils import safe_json_parse
+from bedrock_native import unified_invoke, unified_stream_text, create_bedrock_client
 
 # Supabase 客户端（延迟导入，可能未安装）
 _supabase_client = None
@@ -373,7 +371,7 @@ class HistoryCompressor:
         return len(session["messages"]) > HistoryCompressor.COMPRESS_THRESHOLD
 
     @staticmethod
-    def compress_history(client: OpenAI, model: str, session: dict) -> str:
+    def compress_history(client, model: str, session: dict, provider: str = "haiku") -> str:
         """
         用 LLM 将早期对话压缩为摘要
 
@@ -412,15 +410,15 @@ class HistoryCompressor:
 - 不要遗漏任何已达成的修改共识"""
 
         try:
-            response = client.chat.completions.create(
-                model=model,
+            response = unified_invoke(
+                client, model, provider,
                 messages=[
                     {"role": "system", "content": compress_prompt},
                     {"role": "user", "content": conversation_text}
                 ],
                 temperature=0.0,
             )
-            summary = response.choices[0].message.content.strip()
+            summary = response["content"].strip()
             print(f"[Orchestrator] 对话历史压缩完成，原 {len(to_compress)} 条消息 → 摘要")
             return summary
         except Exception as e:
@@ -428,7 +426,7 @@ class HistoryCompressor:
             return existing_summary
 
     @staticmethod
-    def extract_memory(client: OpenAI, model: str, session: dict):
+    def extract_memory(client, model: str, session: dict, provider: str = "haiku"):
         """
         从最近的对话中提取结构化记忆
 
@@ -457,8 +455,8 @@ class HistoryCompressor:
 注意：只提取明确出现的信息，不要推测。如果本轮没有相关信息，对应字段留空字符串。"""
 
         try:
-            response = client.chat.completions.create(
-                model=model,
+            response = unified_invoke(
+                client, model, provider,
                 messages=[
                     {"role": "system", "content": extract_prompt},
                     {"role": "user", "content": recent_text}
@@ -467,7 +465,7 @@ class HistoryCompressor:
                 response_format={"type": "json_object"}
             )
 
-            result = safe_json_parse(response.choices[0].message.content)
+            result = safe_json_parse(response["content"])
 
             if result.get("agreed_modification"):
                 memory.add_agreed_modification(result["agreed_modification"])
@@ -520,7 +518,7 @@ class ReflectionChecker:
 - 如果没有发现幻觉，issues 为空数组"""
 
     @staticmethod
-    def check(client: OpenAI, model: str, resume_text: str, rewrite_text: str) -> Optional[dict]:
+    def check(client, model: str, resume_text: str, rewrite_text: str, provider: str = "haiku") -> Optional[dict]:
         """
         检查改写内容是否存在幻觉
 
@@ -534,8 +532,8 @@ class ReflectionChecker:
             检测结果 dict，失败返回 None
         """
         try:
-            response = client.chat.completions.create(
-                model=model,
+            response = unified_invoke(
+                client, model, provider,
                 messages=[
                     {"role": "system", "content": ReflectionChecker.SYSTEM_PROMPT},
                     {"role": "user", "content": f"【简历原文】\n{resume_text[:3000]}\n\n【改写内容】\n{rewrite_text[:2000]}"}
@@ -544,7 +542,7 @@ class ReflectionChecker:
                 max_tokens=300,
                 response_format={"type": "json_object"},
             )
-            result = safe_json_parse(response.choices[0].message.content)
+            result = safe_json_parse(response["content"])
             if result.get("has_hallucination"):
                 print(f"[ReflectionChecker] 检测到幻觉: {result.get('issues', [])}")
             else:
@@ -559,7 +557,7 @@ class ReflectionChecker:
 # 简历结构化拆分
 # ===========================================
 
-def split_resume_sections(client: OpenAI, model: str, resume_text: str) -> List[dict]:
+def split_resume_sections(client, model: str, resume_text: str, provider: str = "haiku") -> List[dict]:
     """
     使用 LLM 将简历拆分为结构化段落
 
@@ -587,8 +585,8 @@ def split_resume_sections(client: OpenAI, model: str, resume_text: str) -> List[
 输出纯 JSON，不要其他文字。"""
 
     try:
-        response = client.chat.completions.create(
-            model=model,
+        response = unified_invoke(
+            client, model, provider,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": resume_text[:4000]}
@@ -597,7 +595,7 @@ def split_resume_sections(client: OpenAI, model: str, resume_text: str) -> List[
             response_format={"type": "json_object"}
         )
 
-        content = response.choices[0].message.content
+        content = response["content"]
         result = safe_json_parse(content)
 
         # 兼容 LLM 返回 {"sections": [...]} 或直接 [...]
@@ -645,43 +643,41 @@ class ChatAgent:
     # 表示还想继续优化的信号词（优先级高于总结关键词）
     CONTINUE_KEYWORDS = ["继续", "还有", "再改", "帮我改", "下一", "另外", "还想", "接着", "补充", "优化"]
 
-    def __init__(self, client: OpenAI, model: str = "glm-4.5",
+    def __init__(self, client, model: str = "glm-4.5", provider: str = "haiku",
                  llm_service=None, convergence_engine=None,
                  model_router=None):
         self.client = client
         self.model = model
+        self.provider = provider
         self.llm_service = llm_service
         self.convergence_engine = convergence_engine
-        self.model_router = model_router  # 多模型路由器（Sonnet/GLM 切换）
+        self.model_router = model_router
         self.session_manager = SessionManager(ttl_seconds=3600)
 
         # 初始化子 Agent — 统一使用主力模型（Haiku 4.5 或 GLM fallback）
         _model_plus = model_router.glm_model_plus if model_router else model
         _model_flash = model_router.glm_model_flash if model_router else model
-        self.diagnosis_agent = DiagnosisAgent(client, _model_plus)   # 开场白
-        self.planning_agent = PlanningAgent(client, _model_plus)     # 优化规划
-        self.optimize_agent = OptimizeAgent(client, model)           # 核心改写
-        self.report_agent = ReportAgent(client, model)               # 总结报告
-        self._model_flash = _model_flash  # 供简历拆分使用
+        self.diagnosis_agent = DiagnosisAgent(client, _model_plus, provider)
+        self.planning_agent = PlanningAgent(client, _model_plus, provider)
+        self.optimize_agent = OptimizeAgent(client, model, provider)
+        self.report_agent = ReportAgent(client, model, provider)
+        self._model_flash = _model_flash
 
-        # Bedrock 原生客户端（报告解读用 invoke_model_with_response_stream 直接调用 Sonnet）
-        self.bedrock_client = None
+        # Bedrock 原生客户端（报告解读 Sonnet + 所有 Agent 共用）
+        self.bedrock_client = model_router.bedrock_client if model_router else None
         self.bedrock_model = config.SONNET_MODEL_ID
-        try:
-            if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
-                self.bedrock_client = boto3.client(
-                    'bedrock-runtime',
-                    region_name=config.AWS_REGION,
-                    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
-                )
-                print(f"[Orchestrator] Bedrock 客户端初始化成功，报告解读将使用 Sonnet: {self.bedrock_model}")
-            else:
-                print("[Orchestrator] AWS 未配置，报告解读将使用主力模型")
-        except Exception as e:
-            print(f"[Orchestrator] Bedrock 初始化失败，报告解读将回退到主力模型: {e}")
 
-        # 打印各模块 model ID
+        if not self.bedrock_client and config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
+            try:
+                self.bedrock_client = create_bedrock_client()
+            except Exception as e:
+                print(f"[Orchestrator] Bedrock 初始化失败: {e}")
+
+        if self.bedrock_client:
+            print(f"[Orchestrator] Bedrock 客户端已就绪，报告解读使用 Sonnet: {self.bedrock_model}")
+        else:
+            print("[Orchestrator] AWS 未配置，报告解读将使用主力模型")
+
         haiku_id = model_router.haiku_model if model_router else "N/A"
         print("[Orchestrator] 多 Agent 系统初始化完成")
         print(f"  - 报告解读 (Sonnet):  {self.bedrock_model}")
@@ -716,15 +712,12 @@ class ChatAgent:
             print("[Orchestrator] ModelRouter 无可用模型，回退默认 client")
             return self.client, self.model, "glm"
 
-        # 更新所有子 Agent 的 client 和 model
-        self.diagnosis_agent.client = client
-        self.diagnosis_agent.model = model
-        self.planning_agent.client = client
-        self.planning_agent.model = model
-        self.optimize_agent.client = client
-        self.optimize_agent.model = model
-        self.report_agent.client = client
-        self.report_agent.model = model
+        # 更新所有子 Agent 的 client、model、provider
+        for agent in [self.diagnosis_agent, self.planning_agent,
+                      self.optimize_agent, self.report_agent]:
+            agent.client = client
+            agent.model = model
+            agent.provider = provider
 
         return client, model, provider
 
@@ -988,9 +981,10 @@ class ChatAgent:
         1. 提取结构化记忆（供下一轮子 Agent 使用）
         2. 判断是否需要压缩对话历史
         """
-        # 捕获当前 client/model 到闭包（线程安全）
-        _pc_client = self.optimize_agent.client  # 使用当前已解析的 client
+        # 捕获当前 client/model/provider 到闭包（线程安全）
+        _pc_client = self.optimize_agent.client
         _pc_model = self.optimize_agent.model
+        _pc_provider = self.optimize_agent.provider
 
         def _bg_process():
             session = self.session_manager.get_session(session_id)
@@ -999,7 +993,7 @@ class ChatAgent:
 
             # 1. 提取结构化记忆
             try:
-                HistoryCompressor.extract_memory(_pc_client, _pc_model, session)
+                HistoryCompressor.extract_memory(_pc_client, _pc_model, session, _pc_provider)
             except Exception as e:
                 print(f"[Orchestrator] 记忆提取失败: {e}")
 
@@ -1007,7 +1001,7 @@ class ChatAgent:
             if HistoryCompressor.should_compress(session):
                 try:
                     compressed = HistoryCompressor.compress_history(
-                        _pc_client, _pc_model, session
+                        _pc_client, _pc_model, session, _pc_provider
                     )
                     keep_recent = HistoryCompressor.KEEP_RECENT
                     recent_messages = session["messages"][-keep_recent:]
@@ -1036,7 +1030,7 @@ class ChatAgent:
                     if has_rewrite and not is_search_reply:
                         resume_text = session.get("resume_text", "")
                         result = ReflectionChecker.check(
-                            _pc_client, _pc_model, resume_text, last_reply
+                            _pc_client, _pc_model, resume_text, last_reply, _pc_provider
                         )
                         if result and result.get("has_hallucination") and result.get("issues"):
                             self.session_manager.update_session(session_id, {
@@ -1056,15 +1050,15 @@ class ChatAgent:
                     )
                     summary_prompt = """请用2-3句话概括以下对话的要点，包括：用户关心什么、给了什么建议、达成了什么共识。
 要求简洁，100字以内。"""
-                    resp = _pc_client.chat.completions.create(
-                        model=_pc_model,
+                    resp = unified_invoke(
+                        _pc_client, _pc_model, _pc_provider,
                         messages=[
                             {"role": "system", "content": summary_prompt},
                             {"role": "user", "content": conv_text},
                         ],
                         temperature=0.0,
                     )
-                    summary = resp.choices[0].message.content.strip()
+                    summary = resp["content"].strip()
                     self.session_manager.save_session_summary(session_id, summary)
                 except Exception as e:
                     print(f"[Orchestrator] 会话摘要生成失败: {e}")
@@ -1202,18 +1196,17 @@ class ChatAgent:
 
     def _call_fallback_stream(self, system_prompt: str) -> Generator[str, None, None]:
         """备用模型流式调用（供报告解读 fallback 使用）"""
-        response = self.diagnosis_agent.client.chat.completions.create(
-            model=self.diagnosis_agent.model,
+        for text in unified_stream_text(
+            self.diagnosis_agent.client,
+            self.diagnosis_agent.model,
+            self.diagnosis_agent.provider,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
             ],
             temperature=0.5,
-            stream=True,
-        )
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        ):
+            yield text
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
         """V2: 报告解读流式输出（Bedrock Sonnet → Haiku/GLM fallback），引导问题由代码追加"""

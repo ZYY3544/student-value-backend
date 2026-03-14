@@ -153,7 +153,7 @@ class Config:
     @property
     def SONNET_MODEL_ID(self) -> str:
         """AWS Bedrock Sonnet 模型 ID"""
-        return os.getenv('SONNET_MODEL_ID', 'us.anthropic.claude-sonnet-4-6')
+        return os.getenv('SONNET_MODEL_ID', 'us.anthropic.claude-sonnet-4-6-20250220-v1:0')
 
     @property
     def HAIKU_MODEL_ID(self) -> str:
