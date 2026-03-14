@@ -35,8 +35,10 @@ import os
 import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
+import boto3
 from openai import OpenAI
 
+from config import config
 from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, PlanningAgent
 from tool_executor import ToolExecutor
 from utils import safe_json_parse
@@ -662,13 +664,28 @@ class ChatAgent:
         self.report_agent = ReportAgent(client, model)               # 总结报告
         self._model_flash = _model_flash  # 供简历拆分使用
 
-        # 报告解读使用 model_router 中的 Sonnet 客户端（无需单独初始化 boto3）
-        if model_router and model_router.sonnet_client:
-            print("[Orchestrator] 报告解读将使用 Claude Sonnet（via ModelRouter）")
-        else:
-            print("[Orchestrator] Sonnet 未配置，报告解读将使用主力模型")
+        # Bedrock 原生客户端（报告解读用 invoke_model_with_response_stream 直接调用 Sonnet）
+        self.bedrock_client = None
+        self.bedrock_model = config.SONNET_MODEL_ID
+        try:
+            if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
+                self.bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=config.AWS_REGION,
+                    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+                )
+                print(f"[Orchestrator] Bedrock 客户端初始化成功，报告解读将使用 Sonnet: {self.bedrock_model}")
+            else:
+                print("[Orchestrator] AWS 未配置，报告解读将使用主力模型")
+        except Exception as e:
+            print(f"[Orchestrator] Bedrock 初始化失败，报告解读将回退到主力模型: {e}")
 
+        # 打印各模块 model ID
+        haiku_id = model_router.haiku_model if model_router else "N/A"
         print("[Orchestrator] 多 Agent 系统初始化完成")
+        print(f"  - 报告解读 (Sonnet):  {self.bedrock_model}")
+        print(f"  - Haiku 主力模型:     {haiku_id}")
         print(f"  - DiagnosisAgent: 开场诊断 → {_model_plus}（温度 {DiagnosisAgent.TEMPERATURE}）")
         print(f"  - PlanningAgent:  优化规划 → {_model_plus}（温度 {PlanningAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化 → {model}（温度 {OptimizeAgent.TEMPERATURE}）")
@@ -1203,31 +1220,32 @@ class ChatAgent:
         system_prompt = self._build_report_analysis_prompt(session)
 
         try:
-            # 优先使用 model_router 中的 Sonnet 客户端（OpenAI 兼容接口）
-            sonnet_client = self.model_router.sonnet_client if self.model_router else None
-            sonnet_model = self.model_router.sonnet_model if self.model_router else None
-
-            if sonnet_client:
-                print(f"[Orchestrator] 报告解读使用 Sonnet: {sonnet_model}")
+            if self.bedrock_client:
+                # ===== Bedrock Claude Sonnet（invoke_model_with_response_stream 直接调用）=====
+                print(f"[Orchestrator] 报告解读使用 Bedrock Sonnet: {self.bedrock_model}")
                 try:
-                    response = sonnet_client.chat.completions.create(
-                        model=sonnet_model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                        ],
-                        temperature=0.5,
-                        max_tokens=1024,
-                        stream=True,
+                    response = self.bedrock_client.invoke_model_with_response_stream(
+                        modelId=self.bedrock_model,
+                        contentType='application/json',
+                        body=json.dumps({
+                            "anthropic_version": "bedrock-2023-05-31",
+                            "max_tokens": 1024,
+                            "temperature": 0.5,
+                            "system": system_prompt,
+                            "messages": [
+                                {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
+                            ]
+                        })
                     )
-                    for chunk in response:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            yield chunk.choices[0].delta.content
+                    for event in response['body']:
+                        chunk = json.loads(event['chunk']['bytes'])
+                        if chunk['type'] == 'content_block_delta':
+                            yield chunk['delta'].get('text', '')
                 except Exception as sonnet_err:
                     print(f"[Orchestrator] Sonnet 调用失败 ({type(sonnet_err).__name__}: {sonnet_err})，自动回退")
                     yield from self._call_fallback_stream(system_prompt)
             else:
-                # 无 Sonnet 客户端，用当前主力模型
+                # 无 Bedrock 客户端，用当前主力模型
                 print(f"[Orchestrator] 报告解读使用主力模型: {self.diagnosis_agent.model}")
                 yield from self._call_fallback_stream(system_prompt)
 
