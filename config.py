@@ -137,18 +137,18 @@ class Config:
 
     @property
     def AWS_ACCESS_KEY_ID(self) -> Optional[str]:
-        """AWS Access Key ID"""
-        return os.getenv('AWS_ACCESS_KEY_ID')
+        """AWS Access Key ID（兼容 AWS_BEDROCK_ACCESS_KEY）"""
+        return os.getenv('AWS_ACCESS_KEY_ID') or os.getenv('AWS_BEDROCK_ACCESS_KEY')
 
     @property
     def AWS_SECRET_ACCESS_KEY(self) -> Optional[str]:
-        """AWS Secret Access Key"""
-        return os.getenv('AWS_SECRET_ACCESS_KEY')
+        """AWS Secret Access Key（兼容 AWS_BEDROCK_SECRET_KEY）"""
+        return os.getenv('AWS_SECRET_ACCESS_KEY') or os.getenv('AWS_BEDROCK_SECRET_KEY')
 
     @property
     def AWS_REGION(self) -> str:
-        """AWS Region"""
-        return os.getenv('AWS_REGION', 'us-east-1')
+        """AWS Region（兼容 AWS_BEDROCK_REGION）"""
+        return os.getenv('AWS_REGION') or os.getenv('AWS_BEDROCK_REGION', 'us-east-1')
 
     @property
     def SONNET_MODEL_ID(self) -> str:
