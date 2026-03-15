@@ -166,17 +166,90 @@ class SessionManager:
         return session_id
 
     def get_session(self, session_id: str) -> Optional[dict]:
-        """获取会话，不存在或已过期返回 None"""
+        """获取会话，不存在时尝试从 Supabase 恢复"""
         with self._lock:
             session = self._sessions.get(session_id)
-            if not session:
+            if session:
+                # 检查过期
+                if time.time() - session["updated_at"] > self._ttl:
+                    del self._sessions[session_id]
+                    print(f"[Orchestrator] 会话 {session_id[:8]} 已过期，已清理")
+                    return None
+                return session
+
+        # 内存中不存在，尝试从 Supabase 恢复
+        restored = self._restore_session_from_supabase(session_id)
+        if restored:
+            print(f"[Orchestrator] 会话 {session_id[:8]} 已从 Supabase 恢复")
+            return restored
+        return None
+
+    def _restore_session_from_supabase(self, session_id: str) -> Optional[dict]:
+        """从 Supabase 恢复会话（服务器重启后的容灾）"""
+        if not _supabase_client:
+            return None
+        try:
+            # 1. 获取 session 元数据
+            sess_resp = _supabase_client.table('chat_sessions') \
+                .select('*') \
+                .eq('id', session_id) \
+                .single() \
+                .execute()
+            if not sess_resp.data:
                 return None
-            # 检查过期
-            if time.time() - session["updated_at"] > self._ttl:
-                del self._sessions[session_id]
-                print(f"[Orchestrator] 会话 {session_id[:8]} 已过期，已清理")
-                return None
+            sess_data = sess_resp.data
+
+            # 2. 获取对话历史
+            msg_resp = _supabase_client.table('chat_messages') \
+                .select('role, content') \
+                .eq('session_id', session_id) \
+                .order('created_at') \
+                .execute()
+            messages = [{"role": m['role'], "content": m['content']} for m in (msg_resp.data or [])]
+
+            # 3. 恢复 assessment_context
+            assessment_context = {}
+            if sess_data.get('assessment_context'):
+                try:
+                    assessment_context = json.loads(sess_data['assessment_context'])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            resume_text = sess_data.get('resume_text') or ''
+
+            # 4. 重建 session 对象
+            now = time.time()
+            session = {
+                "session_id": session_id,
+                "created_at": now,
+                "updated_at": now,
+                "phase": sess_data.get('phase', 'optimizing'),
+                "messages": messages,
+                "assessment_context": assessment_context,
+                "resume_text": resume_text,
+                "resume_sections": None,
+                "memory": ConversationMemory(),
+                "compressed_history": "",
+                "message_count": len(messages),
+                "user_id": sess_data.get('user_id'),
+                "assessment_id": sess_data.get('assessment_id'),
+                "pending_phase_transition": None,
+                "hallucination_warning": None,
+                "reeval_suggested": False,
+                "resume_versions": {},
+                "jd_auto_suggested": False,
+            }
+
+            # 存入内存
+            with self._lock:
+                self._sessions[session_id] = session
+
+            print(f"[Supabase] 恢复会话成功: {session_id[:8]}, {len(messages)} 条消息, phase={session['phase']}")
             return session
+
+        except Exception as e:
+            print(f"[Supabase] 会话恢复失败: {e}")
+            return None
 
     def update_session(self, session_id: str, updates: dict):
         """更新会话字段"""
@@ -223,6 +296,8 @@ class SessionManager:
                     'assessment_id': assessment_id,
                     'phase': session.get('phase', 'opening'),
                     'conversation_memory': session.get('memory', ConversationMemory()).to_context_string() if session.get('memory') else None,
+                    'assessment_context': json.dumps(session.get('assessment_context', {}), ensure_ascii=False),
+                    'resume_text': (session.get('resume_text') or '')[:10000],
                 }).execute()
             except Exception as e:
                 print(f"[Supabase] chat_sessions 持久化失败: {e}")

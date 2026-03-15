@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 -- 补充列（已有表则追加）
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT FALSE;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS assessment_context JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS resume_text TEXT;
 
 -- 对话消息
 CREATE TABLE IF NOT EXISTS chat_messages (
