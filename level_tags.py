@@ -1,17 +1,10 @@
 """
 ===========================================
-学生版职级标签映射规则（专业版）
+校招简历评估 —— 职业能力层级定义 V3
 ===========================================
-覆盖 9-15 级，使用专业职场段位 + 分数制呈现。
-
-段位体系（5个段位）：
-- 90+   战略引领者
-- 80-89 业务驱动者
-- 70-79 独立执行者
-- 60-69 成长潜力者
-- <60   起步探索者
-
-能力评分：基于 HAY 总分映射到 0-100 分制
+适用范围：大学生校招场景
+报告上只显示称谓 + 一段合并描述，不显示级别数字和 band 标签
+级别数字仅用于后台计算（薪酬映射等），不暴露给用户
 """
 
 from typing import Dict, Tuple
@@ -28,8 +21,7 @@ GRADE_SCORE_RANGES = {
     15: (314, 370),
 }
 
-# 职级 → 能力评分区间（0-100 分制）
-# 9级对应 30-44, 10级对应 45-54, ..., 15级对应 90-100
+# 职级 → 能力评分区间（0-100 分制，仅后台使用）
 GRADE_TO_SCORE_RANGE = {
     9:  (30, 44),
     10: (45, 54),
@@ -40,52 +32,101 @@ GRADE_TO_SCORE_RANGE = {
     15: (93, 100),
 }
 
-# 段位定义：(分数下限, 段位名称, 段位描述)
-PROFESSIONAL_TIERS = [
-    (90, "战略引领者", "你的经历深度和广度已经展现出战略级视野，具备引领业务方向的潜力。在校招市场中属于顶尖稀缺人才，值得最好的平台。"),
-    (75, "业务驱动者", "你具备独立驱动业务的综合实力，经历丰富且有深度。在校招竞争中处于领先梯队，大厂核心岗位是你的舞台。"),
-    (60, "独立执行者", "你已经能够独立承担有一定复杂度的工作，具备扎实的专业基础和实战经验。在校招中具有明确的竞争力。"),
-    (45, "成长潜力者", "你已经积累了一定的实践经验，具备持续成长的基础。通过针对性地补强经历短板，竞争力还有很大提升空间。"),
-    (0,  "起步探索者", "你正处于职业探索的起步阶段，经历积累还在早期。建议通过实习、项目等方式快速丰富实战经验。"),
-]
+# V3 层级定义：按 job_grade 直接映射，不再用分数段位
+LEVEL_DEFINITIONS = {
+    9: {
+        "title": "学习准备者",
+        "description": (
+            "正处于知识积累阶段，还没有形成可迁移的实践经验。"
+            "课堂学习和课外活动是当前的主要经历，尚未接触过真实的工作场景或商业环境。"
+            "\n\n"
+            "大多数大一大二、还没开始实习的同学处于这个阶段。"
+            "当务之急不是优化简历措辞，而是先积累一段有实质内容的实习或项目经历。"
+        ),
+    },
+    10: {
+        "title": "初始实践者",
+        "description": (
+            "开始接触真实工作场景，能在明确指导下完成基础的辅助性任务。"
+            "对某个领域有初步了解，但还不能独立产出有完整价值的工作成果。"
+            "\n\n"
+            "做过短期实习、课程项目、或校园组织中有一定执行职责的同学通常在这个阶段。"
+            "你已经迈出了第一步，接下来需要争取更深度参与项目核心环节的机会。"
+        ),
+    },
+    11: {
+        "title": "基础工作执行者",
+        "description": (
+            "能在指导下完成有一定专业门槛的基础工作，"
+            "对自己负责的任务的完成质量和时效有意识把控。"
+            "\n\n"
+            "做过一段较完整的实习、承担过明确分工的项目任务的同学通常在这个阶段。"
+            "你已经能「把事做完」，下一步是学会「把事做好」——从执行指令到理解指令背后的目的。"
+        ),
+    },
+    12: {
+        "title": "例行工作执行者",
+        "description": (
+            "能按照既定流程独立完成例行性的专业工作，"
+            "不需要每一步都有人指导，能对自己的工作成果负责。"
+            "\n\n"
+            "有过较深度的实习经历、在实习中能独立负责某一块具体工作的同学通常在这个阶段。"
+            "你已经能「照着做」，下一步是「自己想办法做得更好」——从遵循流程到优化流程。"
+        ),
+    },
+    13: {
+        "title": "探索型工作执行者",
+        "description": (
+            "在完成基本工作的同时，会主动尝试新的方法和思路来提升效率。"
+            "不只是按指令做事，开始有自己的判断和改进意识。"
+            "\n\n"
+            "在实习中不只是完成交办任务、还主动提出过优化建议或尝试过新工具的同学通常在这个阶段。"
+            "你已经展现出从「执行者」向「贡献者」过渡的趋势，但还需要更多独立负责完整项目的经验来验证。"
+        ),
+    },
+    14: {
+        "title": "初步独立贡献者",
+        "description": (
+            "能独立承担一个模块的工作，对自己负责部分的质量和进度有完整的把控。"
+            "不只是做好自己的事，开始理解自己的工作在整体中的位置和价值。"
+            "\n\n"
+            "在实习中独立负责过一个完整模块（比如一份研究报告、一个产品功能、一次用户调研）的同学通常在这个阶段。"
+            "校招生能达到这个级别已经很有竞争力了——你有能力在入职后快速独立上手。"
+        ),
+    },
+    15: {
+        "title": "独立贡献者",
+        "description": (
+            "能独立承担一个完整业务模块或大型项目中的核心部分，"
+            "并且能指导他人开展工作。对自己负责领域的整体产出负责。"
+            "\n\n"
+            "极少数校招生能达到这个级别——通常是有过创业经历、带队经历、"
+            "或在头部公司长期实习且承担过核心职责的人。"
+            "这个级别意味着你入职后可以跳过大部分新人适应期，直接进入产出状态。"
+        ),
+    },
+}
 
 
 def _hay_total_to_ability_score(job_grade: int, total_score: int) -> int:
-    """
-    将 HAY 总分映射到 0-100 的能力评分
-
-    映射逻辑：
-    1. 根据 job_grade 确定该级的评分区间
-    2. 根据 total_score 在该级 HAY 总分区间中的位置，线性插值到评分区间
-    """
+    """将 HAY 总分映射到 0-100 的能力评分（仅后台使用）"""
     if job_grade < 9:
         job_grade = 9
     elif job_grade > 15:
         job_grade = 15
 
-    # 获取 HAY 总分区间
     hay_low, hay_high = GRADE_SCORE_RANGES.get(job_grade, (161, 191))
-    # 获取评分区间
     score_low, score_high = GRADE_TO_SCORE_RANGE.get(job_grade, (55, 64))
 
-    # 线性插值
     hay_span = hay_high - hay_low
     if hay_span <= 0:
         return score_low
 
     ratio = (total_score - hay_low) / hay_span
-    ratio = max(0.0, min(1.0, ratio))  # 限制在 [0, 1]
+    ratio = max(0.0, min(1.0, ratio))
 
     ability_score = int(score_low + ratio * (score_high - score_low))
     return max(0, min(100, ability_score))
-
-
-def _get_professional_tier(ability_score: int) -> Tuple[str, str]:
-    """根据能力评分返回 (段位名称, 段位描述)"""
-    for threshold, name, desc in PROFESSIONAL_TIERS:
-        if ability_score >= threshold:
-            return name, desc
-    return PROFESSIONAL_TIERS[-1][1], PROFESSIONAL_TIERS[-1][2]
 
 
 def get_student_level_tag_and_desc(
@@ -93,60 +134,31 @@ def get_student_level_tag_and_desc(
     total_score: int = 0
 ) -> Tuple[str, str]:
     """
-    学生版标签生成函数（专业版）
-
-    Args:
-        job_grade: 职级 (9-15)
-        total_score: HAY 总分，用于精确计算能力评分
+    V3 标签生成：按 job_grade 直接映射 title + description
 
     Returns:
-        (tier_name, tier_description) 段位名称和描述
+        (title, description) — 报告上显示的称谓和描述
     """
     if job_grade < 9:
         job_grade = 9
     elif job_grade > 15:
         job_grade = 15
 
-    ability_score = _hay_total_to_ability_score(job_grade, total_score)
-    return _get_professional_tier(ability_score)
+    level_def = LEVEL_DEFINITIONS.get(job_grade, LEVEL_DEFINITIONS[11])
+    return level_def["title"], level_def["description"]
 
 
 def get_ability_score(job_grade: int, total_score: int = 0) -> int:
-    """
-    获取能力评分（0-100）
-
-    Args:
-        job_grade: 职级 (9-15)
-        total_score: HAY 总分
-
-    Returns:
-        0-100 的能力评分
-    """
+    """获取能力评分 0-100（仅后台使用，不暴露给用户）"""
     return _hay_total_to_ability_score(job_grade, total_score)
 
 
-# 保留原版函数签名的兼容包装
+# 兼容原版调用签名
 def get_level_tag_and_desc(
     job_grade: int,
     factors: Dict[str, str] = None,
     abilities: Dict[str, Dict] = None,
     total_score: int = 0
 ) -> Tuple[str, str]:
-    """
-    兼容原版调用签名，内部转发到学生版逻辑
-    """
+    """兼容原版调用签名，内部转发到 V3 逻辑"""
     return get_student_level_tag_and_desc(job_grade, total_score)
-
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("学生版职级标签测试（专业版）")
-    print("=" * 60)
-
-    for grade in range(9, 16):
-        low, high = GRADE_SCORE_RANGES[grade]
-        for sub, label in [("低档", low + 2), ("中档", (low + high) // 2), ("高档", high - 2)]:
-            ability_score = _hay_total_to_ability_score(grade, label)
-            tier_name, tier_desc = _get_professional_tier(ability_score)
-            print(f"\n【{grade}级 {sub}】能力评分: {ability_score} | 段位: {tier_name}")
-            print(f"  {tier_desc[:50]}...")
