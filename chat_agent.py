@@ -1307,6 +1307,8 @@ class ChatAgent:
 
     def _build_guidance_questions(self, session: dict) -> str:
         """根据引导层级，用评估数据生成个性化引导问题"""
+        if session.get("interview_mode"):
+            return ""
         layer = self._get_guidance_layer(session)
         if layer <= 0:
             return ""
