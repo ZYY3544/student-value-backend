@@ -1228,33 +1228,13 @@ class ChatAgent:
                 yield chunk.choices[0].delta.content
 
     def _stream_report_analysis(self, session: dict) -> Generator[str, None, None]:
-        """报告解读流式输出（OpenRouter Sonnet → 主力模型 fallback），引导问题由代码追加"""
+        """报告解读流式输出（AB测试：临时切换为 Haiku 主力模型），引导问题由代码追加"""
         system_prompt = self._build_report_analysis_prompt(session)
 
         try:
-            if self.sonnet_client:
-                print(f"[Orchestrator] 报告解读使用 OpenRouter Sonnet: {self.sonnet_model}")
-                try:
-                    stream = self.sonnet_client.chat.completions.create(
-                        model=self.sonnet_model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": "请基于以上信息，生成深度洞察分析。"}
-                        ],
-                        temperature=0.5,
-                        max_tokens=1024,
-                        stream=True,
-                    )
-                    for chunk in stream:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            yield chunk.choices[0].delta.content
-                    print(f"[OpenRouter] Sonnet 调用成功")
-                except Exception as sonnet_err:
-                    print(f"[OpenRouter] Sonnet 失败，已回退主力模型 ({type(sonnet_err).__name__}: {sonnet_err})")
-                    yield from self._call_fallback_stream(system_prompt)
-            else:
-                print(f"[Orchestrator] 报告解读使用主力模型: {self.diagnosis_agent.model}")
-                yield from self._call_fallback_stream(system_prompt)
+            # AB测试：暂时跳过 Sonnet，直接用 Haiku 主力模型
+            print(f"[Orchestrator] 报告解读使用主力模型（AB测试）: {self.diagnosis_agent.model}")
+            yield from self._call_fallback_stream(system_prompt)
 
             # 程序化追加引导问题
             ctx = session["assessment_context"]
