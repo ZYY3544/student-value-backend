@@ -2,13 +2,12 @@
 ===========================================
 多岗位对比模块 (Job Comparison)
 ===========================================
-基于同一份 HAY 评估结果，计算面向不同目标岗位的薪酬、匹配度和竞争力。
+基于同一份 HAY 评估结果，计算面向不同目标岗位的薪酬和匹配度。
 
 核心逻辑：
 - HAY 评估只跑 1 次（能力底盘不随目标岗位变化）
 - 薪酬按岗位查表（salary_calculator）
-- 匹配度基于能力结构 × 岗位典型需求
-- 竞争力基于职级在同届中的排名
+- 匹配度 = 用户五维得分按岗位权重加权 / 满分，与职级无关（权重固定）
 """
 
 from typing import Dict, List, Optional
@@ -21,23 +20,24 @@ logger = get_module_logger(__name__)
 # 岗位能力需求画像
 # ===========================================
 # 每个岗位对5个能力维度的权重需求（权重越高表示该岗位越看重该能力）
+# 权重总和 = 1.0，matchScore = sum(score_i × weight_i)
 # 专业力, 管理力, 合作力, 思辨力, 创新力
 JOB_ABILITY_WEIGHTS = {
-    "算法":           {"专业力": 0.35, "管理力": 0.05, "合作力": 0.10, "思辨力": 0.25, "创新力": 0.25},
+    "算法":           {"专业力": 0.35, "管理力": 0.05, "合作力": 0.10, "思辨力": 0.30, "创新力": 0.20},
     "软件开发":       {"专业力": 0.30, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.25, "创新力": 0.20},
-    "产品管理":       {"专业力": 0.15, "管理力": 0.25, "合作力": 0.25, "思辨力": 0.20, "创新力": 0.15},
+    "产品管理":       {"专业力": 0.15, "管理力": 0.20, "合作力": 0.25, "思辨力": 0.25, "创新力": 0.15},
     "数据分析与商业智能": {"专业力": 0.25, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.20},
     "硬件开发":       {"专业力": 0.35, "管理力": 0.10, "合作力": 0.10, "思辨力": 0.25, "创新力": 0.20},
     "信息安全":       {"专业力": 0.35, "管理力": 0.05, "合作力": 0.10, "思辨力": 0.30, "创新力": 0.20},
     "投融资管理":     {"专业力": 0.25, "管理力": 0.20, "合作力": 0.20, "思辨力": 0.25, "创新力": 0.10},
-    "战略管理":       {"专业力": 0.15, "管理力": 0.30, "合作力": 0.20, "思辨力": 0.25, "创新力": 0.10},
+    "战略管理":       {"专业力": 0.15, "管理力": 0.25, "合作力": 0.20, "思辨力": 0.30, "创新力": 0.10},
     "法务":           {"专业力": 0.35, "管理力": 0.10, "合作力": 0.20, "思辨力": 0.25, "创新力": 0.10},
     "人力资源":       {"专业力": 0.15, "管理力": 0.25, "合作力": 0.30, "思辨力": 0.15, "创新力": 0.15},
     "资产管理":       {"专业力": 0.30, "管理力": 0.20, "合作力": 0.15, "思辨力": 0.25, "创新力": 0.10},
-    "市场营销":       {"专业力": 0.15, "管理力": 0.15, "合作力": 0.25, "思辨力": 0.15, "创新力": 0.30},
+    "市场营销":       {"专业力": 0.15, "管理力": 0.15, "合作力": 0.20, "思辨力": 0.15, "创新力": 0.35},
     "销售":           {"专业力": 0.10, "管理力": 0.15, "合作力": 0.35, "思辨力": 0.15, "创新力": 0.25},
     "硬件测试":       {"专业力": 0.30, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.15},
-    "税务":           {"专业力": 0.35, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.25, "创新力": 0.15},
+    "税务":           {"专业力": 0.35, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.10},
     "内审":           {"专业力": 0.30, "管理力": 0.15, "合作力": 0.20, "思辨力": 0.25, "创新力": 0.10},
     "软件测试":       {"专业力": 0.30, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.15},
     "产品运营":       {"专业力": 0.15, "管理力": 0.15, "合作力": 0.25, "思辨力": 0.20, "创新力": 0.25},
@@ -47,7 +47,7 @@ JOB_ABILITY_WEIGHTS = {
     "电商运营":       {"专业力": 0.15, "管理力": 0.15, "合作力": 0.20, "思辨力": 0.20, "创新力": 0.30},
     "风险管理":       {"专业力": 0.30, "管理力": 0.15, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.10},
     "财务管理":       {"专业力": 0.30, "管理力": 0.20, "合作力": 0.15, "思辨力": 0.25, "创新力": 0.10},
-    "会计":           {"专业力": 0.35, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.25, "创新力": 0.15},
+    "会计":           {"专业力": 0.35, "管理力": 0.10, "合作力": 0.15, "思辨力": 0.30, "创新力": 0.10},
     "网络教育":       {"专业力": 0.20, "管理力": 0.15, "合作力": 0.30, "思辨力": 0.15, "创新力": 0.20},
     "供应链管理":     {"专业力": 0.20, "管理力": 0.25, "合作力": 0.20, "思辨力": 0.20, "创新力": 0.15},
     "广告":           {"专业力": 0.15, "管理力": 0.10, "合作力": 0.25, "思辨力": 0.15, "创新力": 0.35},
@@ -65,6 +65,49 @@ JOB_ABILITY_WEIGHTS = {
 DEFAULT_WEIGHTS = {"专业力": 0.20, "管理力": 0.20, "合作力": 0.20, "思辨力": 0.20, "创新力": 0.20}
 
 
+# ===========================================
+# 岗位核心职责（3-4 个关键词）
+# ===========================================
+JOB_CORE_DUTIES = {
+    "算法":           "模型开发、算法优化、数据建模",
+    "软件开发":       "代码开发、系统架构、技术方案",
+    "产品管理":       "需求分析、产品规划、用户体验",
+    "数据分析与商业智能": "数据挖掘、报表分析、业务洞察",
+    "硬件开发":       "电路设计、硬件调试、产品验证",
+    "信息安全":       "安全防护、漏洞检测、风险评估",
+    "投融资管理":     "投资分析、尽职调查、资产配置",
+    "战略管理":       "战略规划、行业研究、商业分析",
+    "法务":           "合同审核、法律合规、风险防控",
+    "人力资源":       "招聘选拔、培训发展、员工关系",
+    "资产管理":       "资产运营、投资组合、风险管控",
+    "市场营销":       "品牌推广、活动策划、市场调研",
+    "销售":           "客户开发、商务谈判、业绩达成",
+    "硬件测试":       "测试方案、故障分析、质量验证",
+    "税务":           "税务筹划、纳税申报、税务合规",
+    "内审":           "审计检查、内控评估、风险发现",
+    "软件测试":       "测试用例、缺陷跟踪、质量保障",
+    "产品运营":       "用户增长、活动运营、数据驱动",
+    "公共关系":       "媒体沟通、危机处理、品牌形象",
+    "游戏设计":       "玩法设计、关卡策划、用户体验",
+    "项目管理":       "进度管控、资源协调、风险管理",
+    "电商运营":       "店铺运营、流量转化、活动策划",
+    "风险管理":       "风险识别、合规审查、预警监控",
+    "财务管理":       "预算编制、财务分析、资金管理",
+    "会计":           "账务处理、财务核算、报表编制",
+    "网络教育":       "课程设计、教学运营、学员管理",
+    "供应链管理":     "采购计划、库存管理、物流协调",
+    "广告":           "创意策划、媒介投放、效果优化",
+    "采购":           "供应商管理、成本谈判、采购执行",
+    "客户服务":       "客户咨询、问题解决、满意度提升",
+    "物流":           "仓储管理、配送调度、物流优化",
+    "行政管理":       "日常行政、办公管理、后勤保障",
+    "IT服务":         "系统运维、技术支持、基础设施",
+    "销售运营":       "销售分析、流程优化、业绩支持",
+    "媒体推广运营":   "内容创作、渠道推广、流量运营",
+    "通用职能":       "综合协调、流程执行、跨部门协作",
+}
+
+
 def calculate_job_match_score(
     abilities: Dict[str, Dict],
     job_function: str,
@@ -72,58 +115,19 @@ def calculate_job_match_score(
     """
     计算能力结构与目标岗位的匹配度 (0-100)
 
-    逻辑：
-    1. 获取目标岗位对各能力维度的权重需求
-    2. 用户的各维度能力分数 × 岗位权重 → 加权分
-    3. 与"理想匹配"做归一化 → 匹配度百分制
-
-    Args:
-        abilities: 5维能力评估结果 {"专业力": {"score": 70, ...}, ...}
-        job_function: 目标岗位职能
-
-    Returns:
-        0-100 的匹配度分数
+    公式：matchScore = sum(score_i × weight_i)
+    权重总和 = 1.0，所以等价于加权平均分
     """
     weights = JOB_ABILITY_WEIGHTS.get(job_function, DEFAULT_WEIGHTS)
 
-    # 计算加权能力分
     weighted_score = 0
     for ability_name, weight in weights.items():
         ability_info = abilities.get(ability_name, {})
         score = ability_info.get("score", 50) if isinstance(ability_info, dict) else 50
         weighted_score += score * weight
 
-    # 归一化到 0-100（最大可能分是 100 * 1.0 = 100）
     match_score = int(weighted_score)
     return max(10, min(100, match_score))
-
-
-def _get_top_abilities(abilities: Dict[str, Dict], n: int = 2) -> List[str]:
-    """获取得分最高的 n 个能力维度名称"""
-    sorted_abilities = sorted(
-        abilities.items(),
-        key=lambda x: x[1].get("score", 0) if isinstance(x[1], dict) else 0,
-        reverse=True,
-    )
-    return [name for name, _ in sorted_abilities[:n]]
-
-
-def _get_weak_abilities_for_job(abilities: Dict[str, Dict], job_function: str) -> List[str]:
-    """获取对于目标岗位来说最需要提升的能力"""
-    weights = JOB_ABILITY_WEIGHTS.get(job_function, DEFAULT_WEIGHTS)
-
-    # 计算每个维度的"差距"：岗位权重高但分数低 = 高差距
-    gaps = []
-    for ability_name, weight in weights.items():
-        ability_info = abilities.get(ability_name, {})
-        score = ability_info.get("score", 50) if isinstance(ability_info, dict) else 50
-        # 差距 = 岗位需求权重 × (100 - 当前分数)
-        gap = weight * (100 - score)
-        gaps.append((ability_name, gap))
-
-    gaps.sort(key=lambda x: x[1], reverse=True)
-    # 返回差距最大的2个（且权重至少 0.15 的）
-    return [name for name, gap in gaps[:2] if gap > 5]
 
 
 def compare_jobs(
@@ -137,37 +141,24 @@ def compare_jobs(
     salary_calculator=None,
 ) -> List[Dict]:
     """
-    多岗位对比：基于同一份能力评估，计算各岗位的薪酬、匹配度和竞争力
-
-    Args:
-        abilities: 5维能力评估结果
-        job_functions: 待对比的岗位职能列表（最多3个）
-        job_grade: HAY 职级
-        industry: 行业
-        city: 城市（已映射为等级，如"一线城市"）
-        school_tier: 学校层级
-        education_level: 学历
-        salary_calculator: SalaryCalculator 实例
+    多岗位对比：基于同一份能力评估，计算各岗位的薪酬和匹配度
 
     Returns:
         [
             {
                 "jobFunction": "产品管理",
-                "salaryRange": "25k~35k",
-                "matchScore": 85,
-                "competitiveness": 70,
-                "strengths": ["管理力", "合作力"],
-                "gaps": ["专业力"],
+                "salaryRange": "14.3k~16.7k",
+                "matchScore": 62,
+                "coreDuties": "需求分析、产品规划、用户体验",
             },
             ...
         ]
     """
-    from salary_competitiveness import calculate_salary_competitiveness
     from student_coefficients import apply_student_coefficients, format_salary_k
 
     results = []
 
-    for func in job_functions[:3]:  # 最多3个岗位
+    for func in job_functions[:3]:
         # 1. 匹配度
         match_score = calculate_job_match_score(abilities, func)
 
@@ -192,20 +183,14 @@ def compare_jobs(
             except Exception as e:
                 logger.warning(f"岗位 {func} 薪酬查询失败: {e}")
 
-        # 3. 竞争力
-        competitiveness = calculate_salary_competitiveness(func, job_grade)
-
-        # 4. 优势和差距
-        top_abilities = _get_top_abilities(abilities)
-        weak_abilities = _get_weak_abilities_for_job(abilities, func)
+        # 3. 核心职责
+        core_duties = JOB_CORE_DUTIES.get(func, "综合协调、流程执行、跨部门协作")
 
         results.append({
             "jobFunction": func,
             "salaryRange": salary_range,
             "matchScore": match_score,
-            "competitiveness": competitiveness,
-            "strengths": top_abilities,
-            "gaps": weak_abilities,
+            "coreDuties": core_duties,
         })
 
     # 按匹配度排序（最匹配的排前面）
@@ -223,9 +208,6 @@ def get_recommended_job(
 ) -> Optional[str]:
     """
     根据能力结构推荐最匹配的岗位（从全部岗位中选出匹配度最高且不同于当前岗位的）
-
-    Returns:
-        推荐岗位名称，或 None
     """
     best_func = None
     best_score = 0
@@ -242,7 +224,6 @@ def get_recommended_job(
 
 
 if __name__ == "__main__":
-    # 测试
     test_abilities = {
         "专业力": {"score": 70, "level": "high"},
         "管理力": {"score": 55, "level": "medium"},
@@ -253,7 +234,8 @@ if __name__ == "__main__":
 
     for func in ["产品管理", "软件开发", "人力资源", "数据分析与商业智能"]:
         score = calculate_job_match_score(test_abilities, func)
-        print(f"  {func}: 匹配度 {score}")
+        duties = JOB_CORE_DUTIES.get(func, "")
+        print(f"  {func}: 匹配度 {score} | {duties}")
 
     recommended = get_recommended_job(test_abilities, "产品管理")
     print(f"\n  推荐岗位: {recommended}")
