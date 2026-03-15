@@ -971,11 +971,17 @@ class ChatAgent:
             if not session:
                 return
 
-            # 1. 提取结构化记忆
-            try:
-                HistoryCompressor.extract_memory(_pc_client, _pc_model, session)
-            except Exception as e:
-                print(f"[Orchestrator] 记忆提取失败: {e}")
+            # 1. 提取结构化记忆（前5轮每轮触发，第6轮起每3轮一次）
+            msg_count_for_memory = len(session.get("messages", []))
+            round_num = msg_count_for_memory // 2  # 每轮 = user + assistant
+            should_extract = round_num <= 5 or round_num % 3 == 0
+            if should_extract:
+                try:
+                    HistoryCompressor.extract_memory(_pc_client, _pc_model, session)
+                except Exception as e:
+                    print(f"[Orchestrator] 记忆提取失败: {e}")
+            else:
+                print(f"[Orchestrator] 跳过记忆提取（第{round_num}轮，非触发轮次）")
 
             # 2. 判断是否需要压缩
             if HistoryCompressor.should_compress(session):
@@ -993,7 +999,7 @@ class ChatAgent:
                 except Exception as e:
                     print(f"[Orchestrator] 历史压缩失败: {e}")
 
-            # 3. 幻觉检测（仅在 Agent 做了简历段落改写时触发）
+            # 3. 幻觉检测（每 3 次改写触发一次，降低后台调用频率）
             try:
                 messages = session["messages"]
                 if messages and messages[-1].get("role") == "assistant":
@@ -1008,14 +1014,20 @@ class ChatAgent:
                     is_search_reply = any(marker in last_reply for marker in skip_markers)
 
                     if has_rewrite and not is_search_reply:
-                        resume_text = session.get("resume_text", "")
-                        result = ReflectionChecker.check(
-                            _pc_client, _pc_model, resume_text, last_reply
-                        )
-                        if result and result.get("has_hallucination") and result.get("issues"):
-                            self.session_manager.update_session(session_id, {
-                                "hallucination_warning": result["issues"]
-                            })
+                        rewrite_count = session.get("rewrite_count", 0) + 1
+                        self.session_manager.update_session(session_id, {"rewrite_count": rewrite_count})
+
+                        if rewrite_count % 3 == 0:
+                            resume_text = session.get("resume_text", "")
+                            result = ReflectionChecker.check(
+                                _pc_client, _pc_model, resume_text, last_reply
+                            )
+                            if result and result.get("has_hallucination") and result.get("issues"):
+                                self.session_manager.update_session(session_id, {
+                                    "hallucination_warning": result["issues"]
+                                })
+                        else:
+                            print(f"[Orchestrator] 跳过幻觉检测（第{rewrite_count}次改写，非触发轮次）")
             except Exception as e:
                 print(f"[Orchestrator] 幻觉检测失败（非阻塞）: {e}")
 
