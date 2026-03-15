@@ -564,8 +564,7 @@ if llm_service is None:
     print("✗ LLM服务初始化失败: 无可用模型，请配置 OPENROUTER_API_KEY 或 GLM_API_KEY")
     exit(1)
 
-# 简历拆分缓存（评估阶段后台启动，chat/start 时取用）
-_pending_splits = {}  # key: hash(resume_text) -> {"thread": Thread, "result": [None]}
+# 简历拆分已移至 start_session 统一处理，不再需要跨接口缓存
 
 # 简历优化 Agent
 chat_agent = None
@@ -929,21 +928,9 @@ def assess():
                 print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
         _t['greeting_end'] = time.time()
 
-        # 9. 后台启动简历结构拆分（不阻塞返回，用户打开画布时取用）
-        _split_key = hash(resume_text)
-        _split_result = [None]
-        def _bg_split_after_greeting():
-            try:
-                _split_c, _split_m, _split_p = model_router.get_client_for_user(None)
-                _split_result[0] = split_resume_sections(
-                    _split_c, _split_m, resume_text
-                )
-                print(f"[评估→后台] 简历拆分完成，{len(_split_result[0])} 个段落（模型: {_split_m}）")
-            except Exception as e:
-                print(f"[评估→后台] 简历拆分失败: {e}")
-        _split_thread = threading.Thread(target=_bg_split_after_greeting, daemon=True)
-        _split_thread.start()
-        _pending_splits[_split_key] = {"thread": _split_thread, "result": _split_result}
+        # 9. 简历结构拆分已移至 /chat/start → start_session 统一处理
+        #    （此前在 assess 后台预拆分，但因 LLM 耗时长，缓存总是未命中，
+        #     导致 start_session 重复调用，浪费一次 Haiku 费用）
 
         # ===========================================
         # 详细日志输出（验证映射逻辑）
@@ -1454,16 +1441,6 @@ def chat_start():
         resume_sections = data.get('resumeSections')  # 评测阶段预拆分的段落
         preloaded_greeting = data.get('greeting')    # 评估阶段预生成的开场白
 
-        # 尝试从评估阶段的后台拆分缓存中取用简历段落（非阻塞：只取已完成的结果）
-        if not resume_sections:
-            _split_key = hash(resume_text)
-            pending = _pending_splits.pop(_split_key, None)
-            if pending:
-                if not pending["thread"].is_alive() and pending["result"][0]:
-                    resume_sections = pending["result"][0]
-                    print(f"[Agent API] 从评估阶段缓存获取简历段落（{len(resume_sections)} 段）")
-                else:
-                    print(f"[Agent API] 评估阶段拆分未完成，跳过等待，交由 start_session 后台处理")
         result = chat_agent.start_session(
             assessment_context=assessment_context,
             resume_text=resume_text,

@@ -852,23 +852,9 @@ class ChatAgent:
             resume_sections = [{"type": "other", "title": "完整简历", "content": resume_text[:3000]}]
             print(f"[Orchestrator] 简历拆分已移至后台，先返回临时整篇段落")
 
-        # 后台线程生成优化计划（PlanningAgent → GLM-4-Plus）
-        _bg_planning = self.planning_agent  # 已在 __init__ 中用 Plus 模型初始化
-
-        def _bg_plan():
-            try:
-                import time
-                time.sleep(3)  # 错开并发（现在用不同模型，冲突已大幅降低）
-                plan = _bg_planning.generate_plan(assessment_context, resume_text)
-                if plan:
-                    self.session_manager.update_session(session_id, {
-                        "optimization_plan": plan
-                    })
-                    print(f"[Orchestrator] 优化计划已生成并存入 session")
-            except Exception as e:
-                print(f"[Orchestrator] 优化计划生成失败（后台，不影响正常使用）: {e}")
-
-        threading.Thread(target=_bg_plan, daemon=True).start()
+        # PlanningAgent 优化计划已移除
+        # （该计划仅在用户主动聊天时作为 OptimizeAgent 的辅助上下文，
+        #   但多数用户不会聊天，白耗一次 Haiku 调用）
 
         # 保存到对话历史
         self.session_manager.add_message(session_id, "user", "你好，帮我看看简历怎么改")
