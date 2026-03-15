@@ -36,7 +36,7 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
 from config import config
-from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
+from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, InterviewAgent
 from tool_executor import ToolExecutor
 from utils import safe_json_parse
 
@@ -657,6 +657,7 @@ class ChatAgent:
         self.diagnosis_agent = DiagnosisAgent(client, _model_plus)
 
         self.optimize_agent = OptimizeAgent(client, model)
+        self.interview_agent = InterviewAgent(client, model)
         self.report_agent = ReportAgent(client, model)
         self._model_flash = _model_flash
 
@@ -711,7 +712,7 @@ class ChatAgent:
 
         # 更新所有子 Agent 的 client、model
         for agent in [self.diagnosis_agent,
-                      self.optimize_agent, self.report_agent]:
+                      self.optimize_agent, self.interview_agent, self.report_agent]:
             agent.client = client
             agent.model = model
 
@@ -969,6 +970,11 @@ class ChatAgent:
         def _bg_process():
             session = self.session_manager.get_session(session_id)
             if not session:
+                return
+
+            # 面试模式下跳过记忆提取和幻觉检测（面试对话不涉及简历改写）
+            if session.get("interview_mode"):
+                print(f"[Orchestrator] 面试模式，跳过后台处理")
                 return
 
             # 1. 提取结构化记忆（前5轮每轮触发，第6轮起每3轮一次）
@@ -1413,7 +1419,18 @@ class ChatAgent:
                     "post_report_rounds": 0,
                 })
 
-            elif action in ("润色项目经历", "模拟面试"):
+            elif action == "模拟面试":
+                self.session_manager.update_session(session_id, {"interview_mode": True})
+                reply = "".join(self.interview_agent.interview(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=f"用户选择了「模拟面试」。用户补充说：{actual_message}。请直接开始。",
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                ))
+
+            elif action == "润色项目经历":
                 enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
                 reply = self.optimize_agent.optimize_sync(
@@ -1424,7 +1441,6 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-
                 )
 
             elif phase == "optimizing":
@@ -1582,7 +1598,19 @@ class ChatAgent:
                     "post_report_rounds": 0,
                 })
 
-            elif action in ("润色简历", "润色项目经历", "模拟面试", "职业规划"):
+            elif action == "模拟面试":
+                print(f"[Orchestrator] 路由 → InterviewAgent（模拟面试）")
+                self.session_manager.update_session(session_id, {"interview_mode": True})
+                stream = self.interview_agent.interview(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=f"用户选择了「模拟面试」。用户补充说：{actual_message}。请直接开始。",
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
+                )
+
+            elif action in ("润色简历", "润色项目经历", "职业规划"):
                 print(f"[Orchestrator] 路由 → OptimizeAgent（动作: {action}）")
                 enhanced_message = f"用户选择了「{action}」功能。用户补充说：{actual_message}。请直接开始执行「{action}」。"
                 self.optimize_agent.tool_executor = ctx.get("tool_executor")
@@ -1594,7 +1622,24 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
+                )
 
+            # ===== 面试模式持续路由 =====
+            elif session.get("interview_mode"):
+                # 检测退出信号
+                exit_keywords = ["停", "不练了", "够了", "先这样", "改简历", "润色", "帮我改"]
+                is_exit = any(kw in actual_message for kw in exit_keywords)
+                if is_exit:
+                    print(f"[Orchestrator] 面试模式退出")
+                    self.session_manager.update_session(session_id, {"interview_mode": False})
+                # 继续面试（包括退出时的最后一轮，让 InterviewAgent 给总结）
+                stream = self.interview_agent.interview(
+                    assessment_context=ctx["assessment_context"],
+                    resume_text=ctx["resume_text"],
+                    user_message=actual_message,
+                    conversation_summary=ctx["conversation_summary"],
+                    recent_messages=ctx["recent_messages"],
+                    memory_context=ctx["memory_context"],
                 )
 
             # ===== 常规阶段路由 =====

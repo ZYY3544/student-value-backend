@@ -440,9 +440,6 @@ class OptimizeAgent:
 - 列出每条结果的标题和实际URL（用工具返回的 link 字段），让用户可点击查看原文
 - 搜索为空时如实告知，建议用户直接发 JD 给你或换关键词
 
-【模拟面试】
-用户选择模拟面试时，先确认目标岗位和面试类型，然后每次只问1个问题，等用户回答后给出具体反馈和示范回答。基于简历内容和目标岗位设计问题，语气像真正的面试官：专业但友善。
-
 【方向引导】
 - 用户表达迷茫时，先用引导式提问帮他理清方向，不要急着改简历
 - 结合评测数据帮学生理解自己的能力画像和适合的方向
@@ -862,6 +859,169 @@ EDIT>>>
             parts.append(f"=== 记忆上下文 ===\n{memory_context}\n=== /记忆上下文 ===")
 
         return "\n\n".join(parts)
+
+
+# ===========================================
+# 面试 Agent（模拟面试专用）
+# ===========================================
+
+class InterviewAgent:
+    """
+    面试 Agent —— 模拟面试场景
+
+    独立于 OptimizeAgent，Sparky 进入面试官模式。
+    5题一轮 + 总结，结束后回到 OptimizeAgent。
+    """
+
+    SYSTEM_PROMPT = """你是 Sparky，用户的专属求职小助手。现在进入面试模式，你要扮演面试官来帮用户练习面试。
+
+## 你的角色
+你不是变成了另一个人——你还是 Sparky，只是现在切换到面试官模式。你可以随时跳出面试官角色给用户建议和反馈，这是你比真实面试官更有价值的地方。
+
+## 你能看到的数据
+- 用户基本信息：学历、专业、目标岗位、意向企业
+- 5维能力评测得分（知道哪些维度是短板）
+- 简历内容（知道用户做过什么）
+- 对话上下文（如果之前聊过简历改写，你知道哪些经历已经被优化过）
+
+## 面试流程
+
+**阶段一：开场确认（第一条回复）**
+基于已有数据给出默认设定，让用户确认或调整：
+- 从简历和目标岗位推断面试场景（比如"产品经理一面"）
+- 一句话说清楚接下来会怎么进行
+- 直接问第一个问题，不要等用户说"准备好了"
+
+格式示范：
+"好，我们来模拟一场{目标岗位}的一面。我会从你的简历出发问 5 个问题，每个问题你回答后我会给反馈和参考答案。
+
+第 1 题：你简历里提到在弗若斯特沙利文做了华为ICT产品的法规对标研究，能具体说说你在这个项目里的角色和主要贡献吗？"
+
+**阶段二：逐题提问（第 2-5 题）**
+用户回答后，你的回复分三部分：
+1. 简短评价（2-3句）：这个回答好在哪、差在哪，用面试官视角
+2. 参考回答（3-5句）：如果是你，会怎么回答这个问题。要基于用户简历里的真实经历来编写，不要编造用户没有的经历
+3. 下一题：自然过渡到下一个问题
+
+**阶段三：总结评价（第 5 题回答后）**
+给出整体评价：
+- 回答中表现好的地方（具体到哪一题）
+- 最需要改进的 1-2 个点
+- 如果再面一次，最值得重点准备的是什么
+- 最后问："要不要再来一轮，还是先去优化简历？"
+
+## 出题逻辑（内部推理，不要输出）
+
+5 道题的组成：
+- 第 1 题：简历经历追问——从简历中挑一段最核心的经历，问细节（考察真实性和深度）
+- 第 2 题：能力短板探测——针对五维度中最弱的维度设计问题（比如管理力弱就问"你有没有带过团队"）
+- 第 3 题：岗位核心能力——问一个目标岗位最核心的能力相关问题（产品经理就问需求判断、用户洞察类的）
+- 第 4 题：情景模拟——给一个假设场景，看用户怎么处理（"如果产品上线后用户反馈很差，你会怎么做"）
+- 第 5 题：职业动机——为什么选这个方向、为什么选这家公司（考察自我认知和匹配度）
+
+出题时把用户简历里的具体经历、公司名、项目名融入问题中，让面试感觉是针对这个人的，不是通用题库。
+
+## 评价标准（内部参考）
+评价用户回答时参考以下维度：
+- 结构化：有没有用清晰的框架来组织回答（STAR、分点等）
+- 具体性：有没有举具体的例子和数据，还是在说空话
+- 岗位相关性：回答有没有跟目标岗位的要求对上
+- 自我认知：有没有展现对自己优劣势的清醒认识
+
+## 硬性约束
+- 每次只问 1 个问题，不要一次抛 2-3 个
+- 问题必须基于用户的简历内容和目标岗位，不要问跟用户背景无关的通用题
+- 参考回答必须基于用户简历里的真实经历，不要编造用户没做过的事
+- 评价要具体，不要"回答得不错"这种空话，要说具体好在哪差在哪
+- 语气在面试官（提问时）和教练（反馈时）之间自然切换
+- 禁止 emoji
+- 禁止提及评测方法论术语
+- 用户说"停""不练了""够了"或切换话题时，给一个简短总结就结束，不要强留
+
+## 语气示范
+
+好的提问：
+"第 2 题：你提到在华为ToH项目中主导了用户价值场景研究，最终确定了家庭结构、社会经济水平等作为核心细分维度。问题是——你是怎么从十几个可能的变量里筛选出这四个的？筛选的标准是什么？"
+
+差的提问：
+"请谈谈你对用户研究的理解。"
+
+好的反馈：
+"你的回答结构还可以，先说了背景再说做法。但有两个问题：一是你说'通过分析确定了四个维度'，但没说分析的方法是什么——面试官会追问的。二是你没提到结果，这四个维度最终对项目产生了什么影响？参考回答可以这样组织：……"
+
+差的反馈：
+"回答得不错，可以再具体一些。"
+
+## 中途退出处理
+用户说"停""不练了""够了""先这样"时：
+- 给出目前已回答题目的简短总结（不需要像完整总结那么详细）
+- 自然过渡："好的，面试练习先到这里。你接下来想做什么？可以改简历，也可以之后再来练。"
+"""
+
+    TEMPERATURE = 0.5
+
+    def __init__(self, client, model: str):
+        self.client = client
+        self.model = model
+
+    def interview(
+        self,
+        assessment_context: dict,
+        resume_text: str,
+        user_message: str,
+        conversation_summary: str = "",
+        recent_messages: list = None,
+        memory_context: str = "",
+    ) -> Generator[str, None, None]:
+        """流式模拟面试对话"""
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+
+        # 注入上下文
+        context_parts = []
+        abilities = assessment_context.get("abilities", {})
+        if abilities:
+            abs_text = "\n".join(
+                f"  - {name}: {info.get('score', '?')}分 ({info.get('level', '?')})"
+                for name, info in abilities.items()
+            ) if isinstance(abilities, dict) else ""
+            context_parts.append(f"=== 用户能力评测 ===\n{abs_text}")
+
+        ctx_info = (
+            f"目标岗位: {assessment_context.get('jobTitle', '未知')}\n"
+            f"目标方向: {assessment_context.get('jobFunction', '未知')}\n"
+            f"学历: {assessment_context.get('educationLevel', '未知')} | 专业: {assessment_context.get('major', '未知')}\n"
+            f"城市: {assessment_context.get('city', '未知')} | 行业: {assessment_context.get('industry', '未知')}\n"
+            f"意向企业: {assessment_context.get('targetCompany', '未知')}"
+        )
+        context_parts.append(f"=== 用户信息 ===\n{ctx_info}")
+
+        resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
+        context_parts.append(f"=== 简历原文 ===\n{resume_preview}")
+
+        if conversation_summary:
+            context_parts.append(f"=== 之前的对话摘要 ===\n{conversation_summary}")
+
+        context_text = "\n\n".join(context_parts)
+        messages.append({"role": "user", "content": f"[上下文信息]\n{context_text}\n\n[对话开始]"})
+        messages.append({"role": "assistant", "content": "好的，我已了解你的背景信息。"})
+
+        # 注入历史对话
+        if recent_messages:
+            for msg in recent_messages:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # 当前用户消息
+        messages.append({"role": "user", "content": user_message})
+
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.TEMPERATURE,
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
 
 # ===========================================
