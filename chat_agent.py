@@ -36,7 +36,7 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, List, Generator, Tuple
 from config import config
-from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent, PlanningAgent
+from multi_agent import DiagnosisAgent, OptimizeAgent, ReportAgent
 from tool_executor import ToolExecutor
 from utils import safe_json_parse
 
@@ -151,7 +151,6 @@ class SessionManager:
             "message_count": 0,  # 总消息计数（用于判断是否需要压缩）
             "user_id": user_id,  # Supabase 用户 ID（可选）
             "assessment_id": assessment_id,  # Supabase 评估记录 ID（可选）
-            "optimization_plan": None,  # PlanningAgent 生成的优化计划
             "pending_phase_transition": None,  # 待确认的阶段转换（如 "summary"）
             "hallucination_warning": None,  # 幻觉检测警告
             "reeval_suggested": False,  # 是否已建议过重评估
@@ -656,7 +655,7 @@ class ChatAgent:
         _model_plus = model_router.glm_model_plus if model_router else model
         _model_flash = model_router.glm_model_flash if model_router else model
         self.diagnosis_agent = DiagnosisAgent(client, _model_plus)
-        self.planning_agent = PlanningAgent(client, _model_plus)
+
         self.optimize_agent = OptimizeAgent(client, model)
         self.report_agent = ReportAgent(client, model)
         self._model_flash = _model_flash
@@ -682,7 +681,6 @@ class ChatAgent:
         print(f"  - 报告解读 (Sonnet):  {self.sonnet_model}")
         print(f"  - 主力模型:           {haiku_id}")
         print(f"  - DiagnosisAgent: 开场诊断 → {_model_plus}（温度 {DiagnosisAgent.TEMPERATURE}）")
-        print(f"  - PlanningAgent:  优化规划 → {_model_plus}（温度 {PlanningAgent.TEMPERATURE}）")
         print(f"  - OptimizeAgent:  简历优化 → {model}（温度 {OptimizeAgent.TEMPERATURE}）")
         print(f"  - ReportAgent:    总结报告 → {model}（温度 {ReportAgent.TEMPERATURE}）")
         print(f"  - 简历拆分:       → {_model_flash}")
@@ -712,7 +710,7 @@ class ChatAgent:
             return self.client, self.model, "glm"
 
         # 更新所有子 Agent 的 client、model
-        for agent in [self.diagnosis_agent, self.planning_agent,
+        for agent in [self.diagnosis_agent,
                       self.optimize_agent, self.report_agent]:
             agent.client = client
             agent.model = model
@@ -852,7 +850,7 @@ class ChatAgent:
             resume_sections = [{"type": "other", "title": "完整简历", "content": resume_text[:3000]}]
             print(f"[Orchestrator] 简历拆分已移至后台，先返回临时整篇段落")
 
-        # PlanningAgent 优化计划已移除
+
         # （该计划仅在用户主动聊天时作为 OptimizeAgent 的辅助上下文，
         #   但多数用户不会聊天，白耗一次 Haiku 调用）
 
@@ -903,7 +901,6 @@ class ChatAgent:
             "recent_messages": recent_messages,
             "memory_context": memory_context,
             "tool_executor": session.get("tool_executor"),
-            "optimization_plan": session.get("optimization_plan"),
         }
 
     # 用户确认肯定词
@@ -1415,7 +1412,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
 
             elif phase == "optimizing":
@@ -1429,7 +1426,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent")
@@ -1451,7 +1448,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
 
             # 如果有幻觉警告前缀，拼在回复前面
@@ -1585,7 +1582,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
 
             # ===== 常规阶段路由 =====
@@ -1600,7 +1597,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
             elif phase == "summary":
                 print(f"[Orchestrator] 路由 → ReportAgent（流式）")
@@ -1622,7 +1619,7 @@ class ChatAgent:
                     recent_messages=ctx["recent_messages"],
                     memory_context=ctx["memory_context"],
                     canvas_mode=canvas_mode,
-                    optimization_plan=ctx.get("optimization_plan"),
+
                 )
 
             # 透传流式输出，同时收集完整回复

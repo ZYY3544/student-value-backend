@@ -352,182 +352,6 @@ class DiagnosisAgent:
 # 规划 Agent（session 启动时后台生成优化计划）
 # ===========================================
 
-class PlanningAgent:
-    """
-    规划 Agent —— 分析评测短板+简历，生成结构化优化计划
-
-    职责：
-    - 分析评测结果中的偏弱维度
-    - 对照简历段落找出可优化点
-    - 输出 2-5 条优先级排序的优化建议
-    - 为 OptimizeAgent 提供主动引导依据
-
-    设计原则：
-    - 单轮对话，输入评测+简历，输出 JSON 计划
-    - 温度极低（0.3），确保计划稳定
-    - 后台异步执行，不阻塞用户
-    """
-
-    SYSTEM_PROMPT = """你是一位求职规划专家（不仅是简历优化专家）。请分析用户的评测结果和简历内容，生成一份涵盖求职全流程的结构化规划。
-
-【任务】
-1. 找出简历最值得优化的 2-5 个点
-2. 判断用户当前的求职阶段和认知水平
-3. 给出主动执行建议（Agent 应该主动做什么）
-
-【输出格式】
-严格输出 JSON，格式如下：
-{
-    "user_stage": "探索期/准备期/投递期/面试期",
-    "stage_assessment": "对用户当前阶段的一句话判断（如'目标岗位明确但简历竞争力不足'）",
-    "plan_items": [
-        {
-            "priority": 1,
-            "section": "段落名称（如'实习经历-字节跳动'）",
-            "issue": "当前问题（如'缺少量化数据，描述过于笼统'）",
-            "suggestion": "优化建议（如'补充用户增长数据，用STAR结构重写'）",
-            "expected_impact": "预期提升（如'提升专业能力和业务影响力的体现'）"
-        }
-    ],
-    "proactive_actions": [
-        {
-            "action": "search_jobs/tailor_resume/suggest_direction",
-            "reason": "为什么建议主动执行这个动作",
-            "params": {}
-        }
-    ],
-    "career_insight": "基于评测数据的一句话职业洞察（如'你的跨领域整合能力突出，在产品岗方向很有优势'）",
-    "overall_strategy": "整体优化策略的一句话概括"
-}
-
-【分析维度】
-- 量化数据：哪些经历缺少具体数字
-- 结构表达：哪些段落缺乏背景-任务-行动-成果结构
-- 能力体现：评测中偏弱的能力维度，在简历哪些段落可以加强体现
-- 差异化：哪些经历有独特价值但没有突出
-- 求职阶段：用户是在探索方向、准备材料、还是已经在投递
-
-【主动执行建议规则】
-- 如果用户目标岗位明确 → 建议 search_jobs 搜索相关岗位了解市场
-- 如果用户评测结果中某个能力维度特别突出 → 在 career_insight 中点出来
-- 如果用户意向行业/方向比较热门 → 建议看看竞争态势
-- proactive_actions 给出 1-3 个建议
-
-【规则】
-- 优先关注评测得分偏弱的能力维度对应的简历段落
-- 注意：应届生的管理力偏弱是正常的（缺少团队管理经验），在诊断和建议中不要过度强调，可以一笔带过
-- 每条建议要具体到简历中的某个段落
-- 不要建议编造不存在的经历
-- career_insight 要基于数据说话，给出具体的方向性建议
-- 输出纯 JSON，不要其他文字"""
-
-    TEMPERATURE = 0.3
-
-    def __init__(self, client, model: str):
-        self.client = client
-        self.model = model
-
-    def generate_plan(self, assessment_context: dict, resume_text: str) -> Optional[dict]:
-        """
-        生成结构化优化计划（含 429 重试）
-
-        Args:
-            assessment_context: 评估结果
-            resume_text: 简历原文
-
-        Returns:
-            优化计划 dict，失败返回 None
-        """
-        user_prompt = self._build_input(assessment_context, resume_text)
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self.SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=self.TEMPERATURE,
-                    response_format={"type": "json_object"},
-                )
-                content = response.choices[0].message.content.strip()
-                plan = safe_json_parse(content)
-                print(f"[PlanningAgent] 优化计划生成成功，共 {len(plan.get('plan_items', []))} 条建议")
-                return plan
-            except Exception as e:
-                error_str = str(e)
-                if '429' in error_str and attempt < max_retries - 1:
-                    wait = (attempt + 1) * 3
-                    print(f"[PlanningAgent] 429 限流，{wait}s 后重试 ({attempt + 1}/{max_retries})")
-                    import time
-                    time.sleep(wait)
-                    continue
-                print(f"[PlanningAgent] 计划生成失败: {e}")
-                return None
-        return None
-
-    def _build_input(self, ctx: dict, resume_text: str) -> str:
-        """构建规划 Agent 的输入（复用 DiagnosisAgent 的因素映射逻辑）"""
-        factors = ctx.get("factors", {})
-        abilities = ctx.get("abilities", {})
-
-        factor_names = {
-            "practical_knowledge": "专业力",
-            "managerial_knowledge": "管理力",
-            "communication": "合作力",
-            "thinking_environment": "思辨力",
-            "thinking_challenge": "创新力",
-            "freedom_to_act": "管理力(FTA)",
-            "magnitude": "创新力(M)",
-            "nature_of_impact": "合作力(NI)",
-        }
-
-        factors_text = "\n".join(
-            f"  - {factor_names.get(k, k)}: {v}"
-            for k, v in factors.items()
-        )
-
-        abilities_text = "\n".join(
-            f"  - {name}: {info.get('score', '?')}分 ({info.get('level', '?')})"
-            for name, info in abilities.items()
-        ) if isinstance(abilities, dict) else "  暂无能力数据"
-
-        # 能力排序，找出偏弱维度
-        weak_abilities = []
-        strong_abilities = []
-        if isinstance(abilities, dict):
-            sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get("score", 50))
-            weak_abilities = [name for name, _ in sorted_abs[:2]]
-            strong_abilities = [name for name, _ in sorted_abs[-2:]]
-
-        resume_preview = resume_text[:3000] if len(resume_text) > 3000 else resume_text
-
-        return f"""请分析以下评估结果和简历，生成优化计划。
-
-【评估结果】
-- 学历: {ctx.get('educationLevel', '未知')} | 专业: {ctx.get('major', '未知')}
-- 意向城市: {ctx.get('city', '未知')} | 意向行业: {ctx.get('industry', '未知')}
-- 目标岗位: {ctx.get('jobTitle', '未知')}
-- 薪酬区间: {ctx.get('salaryRange', '未知')}
-
-5维能力档位:
-{factors_text}
-
-5维能力得分:
-{abilities_text}
-
-能力分析:
-- 较强维度: {', '.join(strong_abilities) if strong_abilities else '暂无'}
-- 偏弱维度: {', '.join(weak_abilities) if weak_abilities else '暂无'}
-（注意：应届生管理力偏弱是正常情况，不必过度强调）
-
-【简历内容】
-{resume_preview}
-
-请生成优化计划。"""
-
 
 # ===========================================
 # 优化 Agent（优化阶段专用）
@@ -739,7 +563,6 @@ EDIT>>>
         recent_messages: List[dict] = None,
         memory_context: str = "",
         canvas_mode: bool = False,
-        optimization_plan: dict = None,
     ) -> Generator[str, None, None]:
         """
         流式生成优化建议（支持 Function Call）
@@ -757,7 +580,6 @@ EDIT>>>
             assessment_context, resume_text, user_message,
             conversation_summary, recent_messages or [], memory_context,
             canvas_mode=canvas_mode,
-            optimization_plan=optimization_plan,
         )
 
         try:
@@ -866,14 +688,12 @@ EDIT>>>
         recent_messages: List[dict] = None,
         memory_context: str = "",
         canvas_mode: bool = False,
-        optimization_plan: dict = None,
     ) -> str:
         """非流式生成优化建议（支持 Function Call）"""
         messages = self._build_messages(
             assessment_context, resume_text, user_message,
             conversation_summary, recent_messages or [], memory_context,
             canvas_mode=canvas_mode,
-            optimization_plan=optimization_plan,
         )
 
         try:
@@ -920,7 +740,6 @@ EDIT>>>
         recent_messages: List[dict],
         memory_context: str,
         canvas_mode: bool = False,
-        optimization_plan: dict = None,
     ) -> list:
         """
         构建发送给 LLM 的消息列表
@@ -941,7 +760,7 @@ EDIT>>>
 
         # 构建上下文（按需注入：根据对话阶段决定带什么）
         context = self._build_context(
-            ctx, resume_text, conversation_summary, memory_context, optimization_plan,
+            ctx, resume_text, conversation_summary, memory_context,
             user_message=user_message, canvas_mode=canvas_mode, has_history=bool(recent_messages),
         )
 
@@ -990,7 +809,6 @@ EDIT>>>
     def _build_context(
         self, ctx: dict, resume_text: str,
         conversation_summary: str, memory_context: str,
-        optimization_plan: dict = None,
         user_message: str = "", canvas_mode: bool = False, has_history: bool = False,
     ) -> str:
         """
@@ -1042,22 +860,6 @@ EDIT>>>
 
         if memory_context:
             parts.append(f"=== 记忆上下文 ===\n{memory_context}\n=== /记忆上下文 ===")
-
-        # --- 优化计划：只注入优先级最高的前2条 ---
-        if optimization_plan:
-            try:
-                plan_items = optimization_plan.get("plan_items", [])
-                # 按 priority 排序，只取前2条
-                top_items = sorted(plan_items, key=lambda x: x.get("priority", 99))[:2]
-                if top_items:
-                    slim_plan = {
-                        "user_stage": optimization_plan.get("user_stage", ""),
-                        "plan_items": top_items,
-                    }
-                    plan_text = json.dumps(slim_plan, ensure_ascii=False, indent=2)
-                    parts.append(f"=== 优化计划（重点） ===\n{plan_text}\n=== /优化计划 ===")
-            except (TypeError, ValueError, AttributeError):
-                pass
 
         return "\n\n".join(parts)
 
