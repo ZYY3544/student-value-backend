@@ -1123,6 +1123,19 @@ class ChatAgent:
         structure_score = ctx.get("structureScore", "未知")
         power_score = ctx.get("powerScore", "未知")
 
+        # 多方向薪酬对比数据
+        job_comparisons = ctx.get("jobComparisons", [])
+        if job_comparisons:
+            job_comp_lines = []
+            for jc in job_comparisons:
+                fn = jc.get("jobFunction", "未知")
+                sr = jc.get("salaryRange", "未知")
+                ms = jc.get("matchScore", "未知")
+                job_comp_lines.append(f"  - {fn}：{sr}（匹配度 {ms}%）")
+            job_comp_text = "\n".join(job_comp_lines)
+        else:
+            job_comp_text = f"  - {ctx.get('jobFunction', job_title)}：{salary_range}"
+
         return f"""你是 Sparky，一个专业的求职分析 agent。你的风格是：精准、有判断力、不废话。你不讨好用户，也不说教，而是用数据说话，帮用户看清事实。
 
 ## 你的任务
@@ -1135,13 +1148,14 @@ class ChatAgent:
 如果简历内容是乱码、测试文字或过于简短，直接告知用户内容不足，不要编造分析。
 
 ## 评估数据
-- 城市：{city} | 目标职位：{job_title}
-- 月薪估值区间：{salary_range}
+- 城市：{city} | 目标方向：{ctx.get('jobFunction', job_title)} | 目标职位：{job_title}
 - 学历：{ctx.get('educationLevel', '未知')} | 专业：{ctx.get('major', '未知')}
 - 意向行业：{ctx.get('industry', '未知')} | 企业性质：{ctx.get('companyType', '未知')}
 - 能力层级：{level_title}（{level_description}）
 - 5维能力画像（满分10分）：
 {abilities_text}
+- 多方向薪酬对比（第一个为用户的目标方向）：
+{job_comp_text}
 - 简历表达力综合分：{expression_score}/100
   STAR规范度 {star_score} | 关键词覆盖 {keyword_score} | 量化程度 {quantify_score}
   表达力度 {power_score} | 信息完整度 {completeness_score} | 结构规范度 {structure_score}
@@ -1165,11 +1179,12 @@ class ChatAgent:
 **第二段：你的能力底子（3-4句）**
 - 点明能力层级称谓，用一句话说清楚这意味着什么能力状态
 - 看五维度的整体形状，给出一个有判断力的概括（不要逐个念分数）
-- 把能力形状跟目标岗位关联起来——这种形状对投{job_title}意味着什么
+- 把能力形状跟目标方向关联起来——这种形状对投{ctx.get('jobFunction', job_title)}意味着什么
 - 段落标题用 **你的能力底子** 加粗
 
 **第三段：市场怎么给你定价（3-4句）**
-- 列出三个方向的薪酬估值做对比
+- 严格使用上方"多方向薪酬对比"中列出的数据，禁止编造或推测薪酬数字
+- 列出各方向的薪酬估值做对比，注意第一个方向是用户的目标方向
 - 解释薪酬差异的原因——是赛道本身的薪酬水位不同，还是能力匹配度不同，还是两者都有
 - 结合简历中的具体经历，判断哪个方向最值得优先投入
 - 段落标题用 **市场怎么给你定价** 加粗
@@ -1183,9 +1198,9 @@ class ChatAgent:
 
 ## 语气要求
 - 像一个很强的顾问在做情况评估，不是老师在讲课，不是学长在聊天
-- 有判断力：敢给方向性建议（"产品管理值得优先投入"），不要说"需要你自己权衡"
-- 用数据说话：每个判断都要有具体数字支撑
-- 正面框架为主：说"你的经历跟产品管理有不少连接点"，不说"你的简历有问题"
+- 有判断力：敢给方向性建议（"XX方向值得优先投入"），不要说"需要你自己权衡"
+- 用数据说话：每个判断都要有具体数字支撑，薪酬数字必须严格引用评估数据中的原始数值
+- 正面框架为主：说"你的经历跟目标方向有不少连接点"，不说"你的简历有问题"
 - 负面信息用中性语气过渡："坦白说""不过""目前"
 - 不要空洞的赞美（"你的经历很亮眼"），但可以基于事实给正面判断
 
@@ -1239,16 +1254,18 @@ class ChatAgent:
             # 程序化追加引导问题
             ctx = session["assessment_context"]
             abilities = ctx.get("abilities", {})
-            salary_range = ctx.get("salaryRange", "未知")
+            job_function = ctx.get("jobFunction", ctx.get("jobTitle", "未知"))
             city = ctx.get("city", "未知")
-            job_title = ctx.get("jobTitle", "未知")
+            # 取目标方向的薪酬
+            jc_list = ctx.get("jobComparisons", [])
+            target_salary = jc_list[0].get("salaryRange", "未知") if jc_list else ctx.get("salaryRange", "未知")
 
             sorted_abs = sorted(abilities.items(), key=lambda x: x[1].get("score", 50))
             weakest = sorted_abs[0][0] if sorted_abs else "某项能力"
 
             guidance = f"\n\n---\n\n**你可能还想了解：**\n"
             guidance += f"1. 我的5维能力画像是怎么生成的？是简历里哪些内容决定了这些分数？\n"
-            guidance += f"2. {salary_range}这个估值区间的数据来源是什么？为什么和我了解到的{city}{job_title}校招薪资有差异？\n"
+            guidance += f"2. {target_salary}这个估值区间的数据来源是什么？为什么和我了解到的{city}{job_function}校招薪资有差异？\n"
             guidance += f"3. 「{weakest}」这个维度具体在衡量什么能力？为什么我在这项上得分相对较低？"
 
             yield guidance
