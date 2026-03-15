@@ -928,9 +928,15 @@ def assess():
                 print(f"[步骤8] 开场白生成失败（不影响评估）: {e}")
         _t['greeting_end'] = time.time()
 
-        # 9. 简历结构拆分已移至 /chat/start → start_session 统一处理
-        #    （此前在 assess 后台预拆分，但因 LLM 耗时长，缓存总是未命中，
-        #     导致 start_session 重复调用，浪费一次 Haiku 费用）
+        # 9. 简历结构预拆分（同步完成，随响应返回，避免 /chat/start 重复调 Haiku）
+        _t['split_start'] = time.time()
+        _resume_sections = []
+        try:
+            _resume_sections = split_resume_sections(_primary_c, _primary_m, resume_text)
+            print(f"[步骤9] 简历拆分完成（{len(_resume_sections)} 段）")
+        except Exception as e:
+            print(f"[步骤9] 简历拆分失败（不影响评估）: {e}")
+        _t['split_end'] = time.time()
 
         # ===========================================
         # 详细日志输出（验证映射逻辑）
@@ -1082,6 +1088,9 @@ def assess():
 
             # Sparky 开场白
             'greeting': _greeting,
+
+            # 预拆分的简历段落（供聊天 Agent 直接使用，避免 /chat/start 重复调 LLM）
+            'resumeSections': _resume_sections,
         }
 
         _t['db_end'] = time.time()
@@ -1119,6 +1128,7 @@ def assess():
         _tag = _t['tag_end'] - _t['tag_start']
         _db = _t['db_end'] - _t['db_start']
         _greet = _t['greeting_end'] - _t['greeting_start']
+        _split = _t['split_end'] - _t['split_start']
         _supa = _t['supabase_end'] - _t['supabase_start']
 
         print(f"\n{'=' * 60}")
@@ -1131,7 +1141,8 @@ def assess():
         print(f"  5. 趣味标签生成:               {_tag:.3f}s")
         print(f"  6. PostgreSQL日志写入:          {_db:.2f}s  ← {'⚠️ 慢!' if _db > 1 else '✓'}")
         print(f"  7. Sparky开场白（LLM）:         {_greet:.2f}s  ← {'⚠️ 慢!' if _greet > 5 else '✓'}")
-        print(f"  8. Supabase存储:               {_supa:.2f}s  ← {'⚠️ 慢!' if _supa > 1 else '✓'}")
+        print(f"  8. 简历段落拆分（LLM）:         {_split:.2f}s  ← {'⚠️ 慢!' if _split > 5 else '✓'}")
+        print(f"  9. Supabase存储:               {_supa:.2f}s  ← {'⚠️ 慢!' if _supa > 1 else '✓'}")
         print(f"{'=' * 60}\n")
 
         return jsonify({'success': True, 'data': response_data}), 200
