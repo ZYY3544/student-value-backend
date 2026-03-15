@@ -1572,8 +1572,8 @@ class ChatAgent:
                 reply = reply + "\n\n---\n\n" + jd_hint
                 self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
 
-            # 分层引导问题（报告解读后的后续对话）
-            if action != "解读报告":  # 解读报告本身已含 Layer 1 引导
+            # 分层引导问题（仅在无特殊动作的常规优化对话中追加）
+            if not action and phase == "optimizing":
                 guidance = self._build_guidance_questions(session)
                 if guidance:
                     reply = reply + guidance
@@ -1777,8 +1777,8 @@ class ChatAgent:
                 yield jd_block
                 self.session_manager.update_session(session_id, {"jd_auto_suggested": True})
 
-            # 分层引导问题（报告解读后的后续对话）
-            if action != "解读报告":  # 解读报告本身已含 Layer 1 引导
+            # 分层引导问题（仅在无特殊动作的常规优化对话中追加）
+            if not action and phase == "optimizing":
                 # 重新获取 session 拿到最新 guidance 状态
                 session = self.session_manager.get_session(session_id)
                 guidance = self._build_guidance_questions(session)
